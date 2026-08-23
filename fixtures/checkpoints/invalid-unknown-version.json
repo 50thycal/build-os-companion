@@ -1,0 +1,10 @@
+{
+  "schema_version": "2",
+  "repository": "50thycal/cargo-ship",
+  "session_id": "future-agent",
+  "agent": "claude",
+  "session_kind": "IMPLEMENTATION",
+  "objective": "Something a later contract allows",
+  "status": "ACTIVE",
+  "updated_at": "2026-08-23T18:00:00Z"
+}

@@ -1,0 +1,17 @@
+{
+  "schema_version": "1",
+  "repository": "50thycal/cargo-ship",
+  "workstream_id": "WS-001",
+  "session_id": "claude-2026-08-23-a1b2c3",
+  "agent": "claude",
+  "session_kind": "IMPLEMENTATION",
+  "objective": "Add region-aware simulation",
+  "status": "ACTIVE",
+  "phase": "BUILDING",
+  "completed": ["Region schema", "Existing 100-round simulation preserved"],
+  "in_progress": ["Baltic region configuration"],
+  "blockers": [],
+  "next_step": "Run balancing simulation",
+  "related_pr": 84,
+  "updated_at": "2026-08-23T18:00:00Z"
+}

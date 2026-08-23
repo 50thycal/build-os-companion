@@ -1,0 +1,19 @@
+{
+  "schema_version": "1",
+  "repository": "50thycal/cargo-ship",
+  "workstream_id": "WS-006",
+  "session_id": "claude-2026-08-23-blocked",
+  "agent": "claude",
+  "session_kind": "IMPLEMENTATION",
+  "objective": "Implement tournament payouts",
+  "status": "BLOCKED",
+  "phase": "BUILDING",
+  "completed": ["Scaffolding"],
+  "in_progress": [],
+  "blockers": [
+    { "description": "Prize-payout rules are undecided", "needs_owner": true }
+  ],
+  "next_step": "Await owner decision on payout rules",
+  "related_pr": null,
+  "updated_at": "2026-08-23T12:00:00Z"
+}

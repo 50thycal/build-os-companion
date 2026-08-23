@@ -1,0 +1,11 @@
+{
+  "schema_version": "1",
+  "repository": "50thycal/cargo-ship",
+  "session_id": "claude-transcript-smuggler",
+  "agent": "claude",
+  "session_kind": "IMPLEMENTATION",
+  "objective": "Add region-aware simulation",
+  "status": "ACTIVE",
+  "transcript": "User: do the thing\nAssistant: sure, doing the thing...",
+  "updated_at": "2026-08-23T18:00:00Z"
+}

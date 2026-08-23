@@ -1,0 +1,98 @@
+{
+  "repositoryFullName": "50thycal/cargo-ship",
+  "defaultBranch": "main",
+  "observedAt": "2026-08-23T14:00:00Z",
+  "pullRequests": [
+    {
+      "number": 84,
+      "title": "Region-aware simulation",
+      "state": "open",
+      "draft": false,
+      "merged": false,
+      "createdAt": "2026-08-21T09:00:00Z",
+      "updatedAt": "2026-08-23T13:30:00Z",
+      "headRef": "claude/regions",
+      "baseRef": "main",
+      "author": "50thycal",
+      "authorIsBot": false,
+      "htmlUrl": "https://github.com/50thycal/cargo-ship/pull/84",
+      "mergeableState": "clean",
+      "requestedReviewers": [],
+      "reviews": [],
+      "checks": [
+        {
+          "id": 9001,
+          "name": "tests",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-08-23T11:30:00Z",
+          "completedAt": "2026-08-23T11:38:00Z",
+          "htmlUrl": "https://github.com/50thycal/cargo-ship/runs/9001"
+        },
+        {
+          "id": 9002,
+          "name": "tests",
+          "status": "completed",
+          "conclusion": "failure",
+          "startedAt": "2026-08-23T13:31:00Z",
+          "completedAt": "2026-08-23T13:40:00Z",
+          "htmlUrl": "https://github.com/50thycal/cargo-ship/runs/9002"
+        }
+      ]
+    },
+    {
+      "number": 91,
+      "title": "Replay export",
+      "state": "open",
+      "draft": false,
+      "merged": false,
+      "createdAt": "2026-08-18T08:00:00Z",
+      "updatedAt": "2026-08-23T13:00:00Z",
+      "headRef": "feature/replay-export",
+      "baseRef": "main",
+      "author": "50thycal",
+      "authorIsBot": false,
+      "htmlUrl": "https://github.com/50thycal/cargo-ship/pull/91",
+      "mergeableState": "clean",
+      "requestedReviewers": [],
+      "reviews": [
+        {
+          "id": 5501,
+          "author": "reviewer-rae",
+          "state": "CHANGES_REQUESTED",
+          "submittedAt": "2026-08-23T13:00:00Z",
+          "htmlUrl": "https://github.com/50thycal/cargo-ship/pull/91#pullrequestreview-5501"
+        }
+      ],
+      "checks": [
+        {
+          "id": 9100,
+          "name": "tests",
+          "status": "completed",
+          "conclusion": "success",
+          "startedAt": "2026-08-22T15:50:00Z",
+          "completedAt": "2026-08-22T15:58:00Z",
+          "htmlUrl": "https://github.com/50thycal/cargo-ship/runs/9100"
+        }
+      ]
+    },
+    {
+      "number": 77,
+      "title": "Bump lockfile",
+      "state": "open",
+      "draft": false,
+      "merged": false,
+      "createdAt": "2026-08-01T08:00:00Z",
+      "updatedAt": "2026-08-02T08:00:00Z",
+      "headRef": "chore/lockfile",
+      "baseRef": "main",
+      "author": "dependabot[bot]",
+      "authorIsBot": true,
+      "htmlUrl": "https://github.com/50thycal/cargo-ship/pull/77",
+      "mergeableState": "dirty",
+      "requestedReviewers": [],
+      "reviews": [],
+      "checks": []
+    }
+  ]
+}
