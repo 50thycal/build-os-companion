@@ -27,6 +27,11 @@ migration.
 
 ## Docker
 
+> **Verified in substance, not as an image.** The production install path was exercised —
+> `npm ci --omit=dev` yields 12 packages, the server starts on those alone, and `/healthz` and the
+> pages respond. `docker build` itself has not been run, because no daemon was available where
+> this was written. Treat the first build as confirming the image, not the app.
+
 ```bash
 docker build -t build-os-companion .
 docker run -d --name companion \
