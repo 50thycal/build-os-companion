@@ -14,6 +14,7 @@ import { describe, expect, it } from "vitest";
 
 import { listItems } from "../src/ingest/buildos/markdown.ts";
 import { parseActiveBoard, parseWorkstreamFile } from "../src/ingest/buildos/parse.ts";
+import { detectBuildOs } from "../src/ingest/buildos/detect.ts";
 
 const fixtures = join(dirname(fileURLToPath(import.meta.url)), "..", "fixtures", "build-os", "live");
 const workstream = readFileSync(join(fixtures, "WS-001-party-games-excerpt.md"), "utf8");
@@ -105,5 +106,56 @@ describe("the real ACTIVE.md board", () => {
   it("extracts PR numbers from markdown links without picking up URL digits", () => {
     expect(parsed.rows[0]!.relatedPrNumbers).toEqual([137, 139]);
     expect(parsed.rows[1]!.relatedPrNumbers).toEqual([141]);
+  });
+});
+
+describe("the two followed repositories lay their artifacts out differently", () => {
+  // Paths as `git ls-files` reports them, recorded 2026-08-24.
+  const partyGames = [
+    "AGENTS.md",
+    "docs/PROJECT_MODEL.md",
+    "docs/DECISIONS.md",
+    "docs/workstreams/ACTIVE.md",
+    "docs/workstreams/WS-001-subway-v0-3-redesign.md",
+    "docs/workstreams/WS-002-subway-route-engineering.md",
+  ];
+  const buildOs = [
+    "README.md",
+    "VERSION.md",
+    "DECISIONS.md",
+    "docs/workstreams/ACTIVE.md",
+    "docs/workstreams/WS-001-companion-domain-and-event-ledger.md",
+    "docs/workstreams/WS-006-podcast-renderer.md",
+  ];
+
+  it("finds party-games at the conventional paths", () => {
+    const detected = detectBuildOs({ paths: partyGames, agentInstructions: "Adopted version: v0.4" });
+    expect(detected.detected).toBe(true);
+    expect(detected.paths.decisions).toBe("docs/DECISIONS.md");
+    expect(detected.paths.projectModel).toBe("docs/PROJECT_MODEL.md");
+  });
+
+  it("finds the decision log build-os actually keeps at its root", () => {
+    const detected = detectBuildOs({ paths: buildOs, agentInstructions: "Build OS v0.4" });
+    expect(detected.detected).toBe(true);
+    // The regression: resolving to `docs/DECISIONS.md` regardless made build-os show no
+    // decisions at all, and an empty section looks the same as a project that made none.
+    expect(detected.paths.decisions).toBe("DECISIONS.md");
+    expect(detected.evidence.join(" ")).toContain("non-default location");
+  });
+
+  it("tolerates a repository with no project model", () => {
+    const detected = detectBuildOs({ paths: buildOs });
+    // Reported at the convention so the path is nameable; reading it simply returns nothing.
+    expect(detected.paths.projectModel).toBe("docs/PROJECT_MODEL.md");
+    expect(detected.paths.workstreamDir).toBe("docs/workstreams");
+  });
+
+  it("lets an explicit override win over any discovered path", () => {
+    const detected = detectBuildOs({
+      paths: buildOs,
+      overrides: { decisions: "adr/log.md" },
+    });
+    expect(detected.paths.decisions).toBe("adr/log.md");
   });
 });
