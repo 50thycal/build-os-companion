@@ -111,7 +111,7 @@ describe("feed cards", () => {
 
   it("describes current state rather than repeating the headline", () => {
     const pr84 = cards.find((c) => c.entityId === "pr:84")!;
-    expect(pr84.currentState).toContain("CI failed");
+    expect(pr84.currentState).toContain("checks failing");
   });
 
   it("carries the workstream a PR belongs to into why it matters", () => {

@@ -1,0 +1,20 @@
+{
+  "$comment": "GET /repos/50thycal/party-games/pulls/141 — the DETAIL endpoint for a merged PR. `merged` is true here and absent from the list payload for the same PR; `mergeable_state` stays `unknown` after merge.",
+  "payload": {
+    "number": 141,
+    "title": "WS-002: Subway route engineering and playtest UX",
+    "state": "closed",
+    "draft": false,
+    "merged": true,
+    "mergeable_state": "unknown",
+    "created_at": "2026-08-24T00:30:54Z",
+    "updated_at": "2026-08-24T11:05:31Z",
+    "closed_at": "2026-08-24T01:41:39Z",
+    "merged_at": "2026-08-24T01:41:39Z",
+    "head": { "ref": "codex/ws-002-subway-route-engineering", "sha": "3b209c01f07a0a4e3dc694651dc1ae65cc4e4719" },
+    "base": { "ref": "main" },
+    "user": { "login": "50thycal", "id": 62454092 },
+    "requested_reviewers": [],
+    "html_url": "https://github.com/50thycal/party-games/pull/141"
+  }
+}

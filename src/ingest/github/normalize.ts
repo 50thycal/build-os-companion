@@ -39,8 +39,17 @@ function prSource(
   };
 }
 
+/**
+ * Who to credit a pull-request event to.
+ *
+ * `AGENT` outranks the author's account type on purpose. On the owner's repositories an agent
+ * pushes as the owner, so going by the account alone credits every autonomous change to a human
+ * who did not make it — and the feed's whole claim to distinguish "you did this" from "this
+ * happened while you were away" rests on getting that apart.
+ */
 function actorFor(pr: GitHubPullRequestObservation) {
-  return { type: pr.authorIsBot ? ("BOT" as const) : ("HUMAN" as const), name: pr.author };
+  const type = pr.authorIsBot ? ("BOT" as const) : pr.authorIsAgent ? ("AGENT" as const) : ("HUMAN" as const);
+  return { type, name: pr.author };
 }
 
 /**

@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/50thycal/build-os/contracts/agent-session-checkpoint.v1.schema.json",
+  "title": "Build OS Agent Session Checkpoint v1",
+  "description": "A point-in-time description of an agent working session's STATE. It is not a transcript, and it is not canonical project state. Durable Build OS artifacts in GitHub outrank any checkpoint that disagrees with them.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "repository",
+    "session_id",
+    "agent",
+    "session_kind",
+    "objective",
+    "status",
+    "updated_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1",
+      "description": "Contract version. Consumers reject checkpoints whose version they do not understand rather than guessing."
+    },
+    "repository": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+      "description": "GitHub repository this session is working in, as owner/repo."
+    },
+    "workstream_id": {
+      "type": ["string", "null"],
+      "pattern": "^WS-[0-9]{3,}$",
+      "description": "Build OS workstream this session belongs to, when it belongs to one. Null for work that has not been given a workstream yet."
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "Stable identifier for this session, unchanged across checkpoints. Reusing an id means 'same session'; a new id means 'new session'."
+    },
+    "agent": {
+      "type": "string",
+      "enum": ["claude", "chatgpt", "codex", "human", "other"],
+      "description": "Which agent is working. 'human' is legitimate — a person working a session is still a session."
+    },
+    "agent_name": {
+      "type": ["string", "null"],
+      "maxLength": 200,
+      "description": "Optional display name, e.g. a model or tool label. Never used for identity or authorization."
+    },
+    "session_kind": {
+      "type": "string",
+      "enum": ["DESIGN", "IMPLEMENTATION", "REVIEW", "INVESTIGATION", "OPERATIONS"]
+    },
+    "objective": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "description": "One sentence: what this session is trying to accomplish."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["ACTIVE", "WAITING", "BLOCKED", "COMPLETED", "ABANDONED"],
+      "description": "UNKNOWN is deliberately absent: it is a state consumers assign to a silent session, never a state an agent may claim."
+    },
+    "phase": {
+      "type": ["string", "null"],
+      "enum": [
+        "IDEA",
+        "EXPLORE",
+        "MODEL",
+        "DECIDE",
+        "BUILD_CARD",
+        "READY_TO_BUILD",
+        "BUILDING",
+        "REVIEW",
+        "COMPLETE",
+        null
+      ],
+      "description": "Build OS workstream phase this session is operating in, when known."
+    },
+    "completed": {
+      "type": "array",
+      "maxItems": 50,
+      "items": { "type": "string", "minLength": 1, "maxLength": 300 },
+      "description": "Short factual statements of what is done. Not narration, not reasoning."
+    },
+    "in_progress": {
+      "type": "array",
+      "maxItems": 50,
+      "items": { "type": "string", "minLength": 1, "maxLength": 300 }
+    },
+    "blockers": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["description", "needs_owner"],
+        "properties": {
+          "description": { "type": "string", "minLength": 1, "maxLength": 500 },
+          "needs_owner": {
+            "type": "boolean",
+            "description": "True only when the owner personally must act. An agent waiting on CI is blocked; it does not need the owner."
+          }
+        }
+      }
+    },
+    "next_step": {
+      "type": ["string", "null"],
+      "maxLength": 500,
+      "description": "The single most useful next action, matching the workstream file's Next Step where one exists."
+    },
+    "related_pr": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "description": "PR this session is currently working on, when there is one. A workstream may span many PRs; a session works one at a time."
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When this checkpoint was produced, RFC 3339. Consumers use it for staleness, so it must be the real time."
+    }
+  }
+}

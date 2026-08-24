@@ -2,3 +2,10 @@ node_modules/
 dist/
 *.tsbuildinfo
 .env
+
+# local scratch for live probes
+.scratch/
+*.db
+*.db-journal
+*.sqlite
+data/

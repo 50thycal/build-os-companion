@@ -1,0 +1,15 @@
+{
+  "$comment": "Vendored Build OS protocol contracts. See contracts/README.md.",
+  "canonicalRepository": "50thycal/build-os",
+  "canonicalRef": "main",
+  "buildOsVersion": "0.4",
+  "vendoredAt": "2026-08-24",
+  "contracts": [
+    {
+      "file": "agent-session-checkpoint.v1.schema.json",
+      "canonicalPath": "contracts/agent-session-checkpoint.v1.schema.json",
+      "sha256": "9001e8083732fad4cb3880654c094a833106543d70be8ebb1d6f8eba7f6dbe46",
+      "consumedBy": "src/ingest/checkpoint/agent-session-checkpoint.v1.schema.json"
+    }
+  ]
+}

@@ -11,6 +11,7 @@
 import { importanceScore, type CompanionEvent } from "../domain/events.ts";
 import { severityRank, type AttentionItem, type Severity } from "../domain/attention.ts";
 import type { ProjectState, PullRequestState, WorkstreamState } from "../domain/state.ts";
+import { describeCi, describePhase, describeReview } from "../domain/describe.ts";
 
 export interface FeedCard {
   id: string;
@@ -58,20 +59,17 @@ function entityKeyOf(event: CompanionEvent): string | undefined {
 }
 
 function describePullRequest(pr: PullRequestState): string {
-  const review =
-    pr.reviewState === "NONE" ? "no review yet" : pr.reviewState.toLowerCase().replace(/_/g, " ");
-  const ci = pr.ciState === "NONE" ? "no CI" : `CI ${pr.ciState.toLowerCase()}`;
   const merge =
     pr.mergeability === "CONFLICTED"
       ? ", conflicts with the base branch"
       : pr.mergeability === "BLOCKED"
         ? ", merge blocked"
         : "";
-  return `${ci}, ${review}${merge}.`;
+  return `${describeCi(pr.ciState)}, ${describeReview(pr.reviewState)}${merge}.`;
 }
 
 function describeWorkstream(ws: WorkstreamState): string {
-  const phase = ws.phase ? ws.phase.replace(/_/g, " ").toLowerCase() : "phase unknown";
+  const phase = describePhase(ws.phase);
   const status = ws.status ? ws.status.toLowerCase() : "status unknown";
   const decisions =
     ws.openDecisions.length > 0

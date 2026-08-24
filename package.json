@@ -1,8 +1,8 @@
 {
-  "name": "@build-os/companion",
+  "name": "build-os-companion",
   "version": "0.1.0",
   "private": true,
-  "description": "Project intelligence companion for Build OS: normalized event ledger, state projection, attention engine, and feed.",
+  "description": "Owner-facing project intelligence application for Build OS: normalized event ledger, durable persistence, deterministic attention engine, and a mobile-first web app.",
   "type": "module",
   "engines": {
     "node": ">=20"
@@ -13,7 +13,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "sync": "node --experimental-strip-types src/cli/sync.ts",
-    "demo": "node --experimental-strip-types src/cli/demo.ts"
+    "demo": "node --experimental-strip-types src/cli/demo.ts",
+    "contracts:check": "node scripts/check-contracts.mjs",
+    "contracts:sync": "node scripts/check-contracts.mjs --sync"
   },
   "dependencies": {
     "ajv": "^8.17.1",
@@ -23,5 +25,9 @@
     "@types/node": "^22.10.2",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/50thycal/build-os-companion.git"
   }
 }
