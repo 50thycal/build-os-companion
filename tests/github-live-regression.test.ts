@@ -64,6 +64,7 @@ const observation = (over: Partial<GitHubPullRequestObservation> = {}): GitHubPu
   createdAt: "2026-08-24T00:00:00Z",
   updatedAt: "2026-08-24T00:00:00Z",
   headRef: "main",
+  headSha: "0000000000000000000000000000000000000000",
   baseRef: "main",
   author: "50thycal",
   authorIsBot: false,

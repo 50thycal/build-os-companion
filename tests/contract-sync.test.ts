@@ -21,7 +21,7 @@ import { describe, expect, it } from "vitest";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const manifest = JSON.parse(readFileSync(join(root, "contracts", "MANIFEST.json"), "utf8")) as {
   canonicalRepository: string;
-  contracts: { file: string; canonicalPath: string; sha256: string; consumedBy: string }[];
+  contracts: { file: string; canonicalPath: string; sha256: string; consumedBy?: string }[];
 };
 
 const sha256 = (text: string) => createHash("sha256").update(text, "utf8").digest("hex");
@@ -38,11 +38,16 @@ describe("vendored Build OS contracts", () => {
       expect(sha256(vendored)).toBe(contract.sha256);
     });
 
-    it(`${contract.file} is byte-identical to the copy src/ loads`, () => {
-      const vendored = readFileSync(join(root, "contracts", contract.file), "utf8");
-      const consumed = readFileSync(join(root, contract.consumedBy), "utf8");
-      expect(consumed).toBe(vendored);
-    });
+    // Some contracts are loaded straight from `contracts/`; only those with a second copy
+    // inside `src/` need the two kept identical.
+    const consumedBy = contract.consumedBy;
+    if (consumedBy) {
+      it(`${contract.file} is byte-identical to the copy src/ loads`, () => {
+        const vendored = readFileSync(join(root, "contracts", contract.file), "utf8");
+        const consumed = readFileSync(join(root, consumedBy), "utf8");
+        expect(consumed).toBe(vendored);
+      });
+    }
   }
 });
 

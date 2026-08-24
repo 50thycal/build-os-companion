@@ -110,6 +110,28 @@ describe("build os detection", () => {
     expect(result.version).toBe("0.3");
   });
 
+  it("reads the adoption date from the compatibility-check line", () => {
+    const result = detectBuildOs({
+      paths: [],
+      agentInstructions:
+        "## Build OS\n- Adopted version: v0.5\n- Last compatibility check: v0.5 on 2026-08-24\n",
+    });
+    expect(result.version).toBe("0.5");
+    expect(result.adoptedAt).toBe("2026-08-24");
+  });
+
+  it("ignores a check line describing a version the project has not adopted", () => {
+    // A stale line about v0.4 says nothing about when v0.5 arrived, and a wrong boundary would
+    // either re-judge history or let current work through.
+    const result = detectBuildOs({
+      paths: [],
+      agentInstructions:
+        "## Build OS\n- Adopted version: v0.5\n- Last compatibility check: v0.4 on 2026-08-01\n",
+    });
+    expect(result.version).toBe("0.5");
+    expect(result.adoptedAt).toBeUndefined();
+  });
+
   it("detects from conventional paths with no instructions file", () => {
     const result = detectBuildOs({ paths: ["docs/workstreams/ACTIVE.md"] });
     expect(result.detected).toBe(true);

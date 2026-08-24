@@ -55,6 +55,7 @@ async function main(): Promise<void> {
     defaultBranch: "main",
     buildOsDetected: detection.detected,
     buildOsVersion: detection.version,
+    buildOsAdoptedAt: detection.adoptedAt,
     paths: detection.paths,
     enabled: true,
     createdAt: now.toISOString(),

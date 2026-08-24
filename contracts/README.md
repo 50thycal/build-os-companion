@@ -15,11 +15,28 @@ rather than trusted.
 
 | Check | When | What it proves |
 |---|---|---|
-| `npm test` (`tests/contract-sync.test.ts`) | Every test run, offline | The vendored file still matches the `sha256` recorded in `MANIFEST.json`, and the copy consumed by `src/` is byte-identical to the copy here. Catches local edits. |
+| `npm test` (`tests/contract-sync.test.ts`) | Every test run, offline | The vendored file still matches the `sha256` recorded in `MANIFEST.json`, and — where an entry names a `consumedBy` copy under `src/` — that copy is byte-identical to the one here. Catches local edits. |
 | `npm run contracts:check` | CI and on demand, needs network | The recorded `sha256` still matches the file at `canonicalPath` in `50thycal/build-os`. Catches upstream drift. |
 
 The offline check is the one that gates the build, because a build must not fail when GitHub is
 unreachable. The network check is the one that tells you the protocol moved.
+
+## Not every entry is a schema
+
+`WORKSTREAM.template.md` is vendored too. It is not parsed at runtime — it is read by
+`tests/review-state-parse.test.ts`, which proves the protocol's own workstream template still
+parses under this Companion's rules. Testing against an invented fixture instead would prove
+only that the Companion agrees with itself; testing against the real template is what notices
+when the protocol changes shape.
+
+Entries like that have a `readBy` rather than a `consumedBy`: there is no second copy under
+`src/`, so there is nothing to keep byte-identical, and the offline check verifies the hash
+alone.
+
+**One entry is currently ahead of canonical `main`.** The vendored template is the v0.5 one from
+`build-os` PR #7, which is in review. Until that PR merges, `npm run contracts:check` reports
+drift on that file — and that drift is the pending upgrade, not a failure. When it merges, run
+`contracts:sync` and the two agree again.
 
 ## Updating a vendored contract
 

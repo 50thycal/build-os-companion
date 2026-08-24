@@ -12,6 +12,12 @@ export interface GitHubReviewObservation {
   state: "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "DISMISSED" | "PENDING";
   submittedAt: string;
   htmlUrl: string;
+  /**
+   * The commit the review was submitted against, as GitHub recorded it. Optional because an
+   * older observation or a hand-built fixture may not carry one — and because it is the field
+   * the v0.5 final-head verification depends on, its absence must degrade rather than throw.
+   */
+  commitId?: string;
 }
 
 /**
@@ -56,6 +62,8 @@ export interface GitHubPullRequestObservation {
   mergedAt?: string;
   closedAt?: string;
   headRef: string;
+  /** Full head commit SHA. The v0.5 review gate compares it against the reviewed head. */
+  headSha: string;
   baseRef: string;
   author: string;
   authorIsBot: boolean;

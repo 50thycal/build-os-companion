@@ -11,8 +11,10 @@
 
 import type {
   IntegrityWarning,
+  ReviewRecord,
   WorkstreamState,
 } from "../../domain/state.ts";
+import { isApprovingVerdict } from "../../domain/state.ts";
 import type { SourceConflict, SourceRef } from "../../domain/provenance.ts";
 import { parseActiveBoard, parseWorkstreamFile, parseWorkstreamId } from "./parse.ts";
 import type { ActiveBoardRow } from "./parse.ts";
@@ -32,6 +34,13 @@ export interface BuildOsSnapshot {
   activeBoardHtmlUrl?: string;
   workstreamFiles: WorkstreamFileInput[];
   observedAt: string;
+  /**
+   * The project's adopted Build OS version, from detection. It is what makes a workstream
+   * subject to the v0.5 merge gate when the file does not declare its own version.
+   */
+  buildOsVersion?: string;
+  /** When the project adopted that version. The boundary between history and current work. */
+  buildOsAdoptedAt?: string;
 }
 
 export interface ReconciledWorkstreams {
@@ -166,6 +175,50 @@ export function reconcileBuildOsState(
       });
     }
 
+    if (parsed.review.verdictMalformed) {
+      warnings.push({
+        code: "REVIEW_VERDICT_MALFORMED",
+        workstreamId,
+        message: `${workstreamId} has a Review State verdict that is not one of the allowed values. Treating it as absent.`,
+        sources: [fileSource],
+      });
+    }
+
+    if (parsed.review.reviewedHeadMalformed) {
+      warnings.push({
+        code: "REVIEWED_HEAD_MALFORMED",
+        workstreamId,
+        message: `${workstreamId} has a Reviewed head that is not a full 40-character SHA. An abbreviation cannot prove which commit was reviewed, so it is treated as absent.`,
+        sources: [fileSource],
+      });
+    }
+
+    // An approval that names no commit proves nothing about the code.
+    for (const record of parsed.review.records) {
+      if (isApprovingVerdict(record.verdict) && !record.reviewedHead) {
+        const about = record.prNumber === undefined ? "" : ` for PR #${record.prNumber}`;
+        warnings.push({
+          code: "APPROVED_WITHOUT_REVIEWED_HEAD",
+          workstreamId,
+          message: `${workstreamId} records an approval${about} with no reviewed head. Treat it as unreviewed until a reviewer names the commit.`,
+          sources: [fileSource],
+        });
+      }
+    }
+
+    const relatedPrNumbers = [
+      ...new Set([...(row?.relatedPrNumbers ?? []), ...parsed.relatedPrNumbers]),
+    ].sort((a, b) => a - b);
+
+    // A record that names no PR binds to the most recent linked PR — the one under review in
+    // practice. Binding it to all of them is what made an older merged PR look unapproved the
+    // moment a newer one was approved.
+    const mostRecentPr = relatedPrNumbers[relatedPrNumbers.length - 1];
+    const reviewRecords: ReviewRecord[] = parsed.review.records.map((record) => ({
+      ...record,
+      prNumber: record.prNumber ?? mostRecentPr,
+    }));
+
     const status = parsed.status ?? row?.status;
     const nextStep = parsed.nextStep ?? row?.nextStep;
     // Next Step is often written as "Blocked: <reason>"; keep the reason, drop the restatement.
@@ -185,13 +238,17 @@ export function reconcileBuildOsState(
       // Build OS records a blocker as BLOCKED plus the reason in Next Step.
       blocker,
       openDecisions: parsed.openDecisions,
-      relatedPrNumbers: [
-        ...new Set([...(row?.relatedPrNumbers ?? []), ...parsed.relatedPrNumbers]),
-      ].sort((a, b) => a - b),
+      relatedPrNumbers,
       relatedDecisionIds: parsed.relatedDecisionIds,
       buildCardReady: parsed.buildCardReady,
       implementationState: parsed.implementationState,
       reviewState: parsed.reviewState,
+      reviewRecords,
+      // The project's pin applies unless the workstream declares its own — but an inherited pin
+      // is weaker evidence than a declaration, and the gate treats it that way. Never inferred
+      // from whether review fields happen to be present.
+      protocolVersion: parsed.protocolVersion ?? snapshot.buildOsVersion,
+      protocolVersionSource: parsed.protocolVersion ? "WORKSTREAM" : "PROJECT",
       updatedAt: parsed.updatedAt,
       sourcePath: file.path,
       source: fileSource,

@@ -20,6 +20,8 @@ export interface DetectionInput {
 export interface DetectionResult {
   detected: boolean;
   version?: string;
+  /** When the project adopted `version`, if its instructions record the date. */
+  adoptedAt?: string;
   paths: BuildOsPaths;
   /** How detection concluded, so a repository that "should" be detected can be debugged. */
   evidence: string[];
@@ -27,6 +29,14 @@ export interface DetectionResult {
 
 const VERSION_PATTERN = /Build OS\s+v(\d+\.\d+(?:\.\d+)?)/i;
 const ADOPTED_VERSION_PATTERN = /Adopted version\s*:\s*v?(\d+\.\d+(?:\.\d+)?)/i;
+/**
+ * `Last compatibility check: v0.5 on 2026-08-24` — the line `FRAMEWORK_SYNC.md` already asks
+ * every adopting project to keep. Its date is the project's **adoption boundary**: work that
+ * predates it was done under the previous version and is never retroactively judged by the new
+ * one.
+ */
+const ADOPTED_AT_PATTERN =
+  /Last compatibility check\s*:\s*v?(\d+\.\d+(?:\.\d+)?)\s+on\s+(\d{4}-\d{2}-\d{2})/i;
 
 export function detectBuildOs(input: DetectionInput): DetectionResult {
   const evidence: string[] = [];
@@ -36,7 +46,13 @@ export function detectBuildOs(input: DetectionInput): DetectionResult {
   const version =
     ADOPTED_VERSION_PATTERN.exec(instructions)?.[1] ?? VERSION_PATTERN.exec(instructions)?.[1];
 
+  const checked = ADOPTED_AT_PATTERN.exec(instructions);
+  // Only trust the date when it belongs to the version actually adopted; a stale check line
+  // describing an older version says nothing about when the current one arrived.
+  const adoptedAt = checked && version && checked[1] === version ? checked[2] : undefined;
+
   if (version) evidence.push(`agent instructions declare Build OS v${version}`);
+  if (adoptedAt) evidence.push(`adopted v${version} on ${adoptedAt}`);
   else if (/build\s*os/i.test(instructions)) evidence.push("agent instructions mention Build OS");
 
   /**
@@ -98,7 +114,7 @@ export function detectBuildOs(input: DetectionInput): DetectionResult {
   const detected = Boolean(version) || hasConventional || hasWorkstreamFiles || hasOverrides;
   if (!detected) evidence.push("no Build OS artifacts or overrides found");
 
-  return { detected, version, paths, evidence };
+  return { detected, version, adoptedAt, paths, evidence };
 }
 
 /** Files under the workstream directory that the parse contract recognises. */

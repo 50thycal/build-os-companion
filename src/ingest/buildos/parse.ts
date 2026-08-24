@@ -8,11 +8,13 @@
  */
 
 import {
+  REVIEW_VERDICTS,
   WORKSTREAM_PHASES,
   WORKSTREAM_STATUSES,
   type DecisionRecord,
   type DecisionStatus,
   type OpenDecision,
+  type ReviewVerdict,
   type WorkstreamPhase,
   type WorkstreamStatus,
 } from "../../domain/state.ts";
@@ -28,6 +30,7 @@ import {
   parseSections,
   parseTables,
   stripCodeFences,
+  stripHtmlComments,
 } from "./markdown.ts";
 
 export const WORKSTREAM_ID_PATTERN = /\bWS-(\d{3,})\b/;
@@ -125,6 +128,188 @@ export function parseActiveBoard(markdown: string): ActiveBoard {
   return { rows, skippedRows };
 }
 
+/**
+ * The Build OS version a workstream declares for itself, from `**Build OS:** v0.5`.
+ *
+ * Only the header block is read: a mention of a version in the body is prose about a release,
+ * not a declaration of the protocol this workstream runs under.
+ */
+function parseProtocolVersion(markdown: string): string | undefined {
+  const raw = headerField(markdown, "Build OS") ?? headerField(markdown, "Protocol");
+  if (!raw) return undefined;
+  const match = /v?(\d+\.\d+(?:\.\d+)?)/.exec(raw.replace(/[*`]/g, ""));
+  return match ? `v${match[1]}` : undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Review State fields (v0.5)
+// ---------------------------------------------------------------------------
+
+const FULL_SHA = /^[0-9a-f]{40}$/i;
+
+export interface ParsedReviewRecord {
+  /** Absent when the record names no PR. Reconciliation binds it to one. */
+  prNumber?: number;
+  verdict?: ReviewVerdict;
+  reviewedHead?: string;
+  finalized: boolean;
+}
+
+export interface ParsedReviewState {
+  /**
+   * One record per reviewed PR. The field form yields at most one; the table form yields one
+   * per row, which is what a workstream spanning several PRs needs.
+   */
+  records: ParsedReviewRecord[];
+  /** Set when a field was present but unreadable. The field itself stays absent. */
+  verdictMalformed: boolean;
+  reviewedHeadMalformed: boolean;
+}
+
+function normalizeVerdict(text: string): ReviewVerdict | undefined {
+  const normalized = text
+    .trim()
+    .toUpperCase()
+    .replace(/\.$/, "")
+    .replace(/[\s-]+/g, "_")
+    .replace(/_WITH_FOLLOWUPS?$/, "_WITH_FOLLOW_UPS");
+  return (REVIEW_VERDICTS as readonly string[]).includes(normalized)
+    ? (normalized as ReviewVerdict)
+    : undefined;
+}
+
+/** `pushed`, `yes`, `done` — anything that is not an absence marker means the commit is on the PR. */
+function parseFinalized(text: string | undefined): boolean {
+  if (text === undefined) return false;
+  const cleaned = text.replace(/[*`]/g, "").trim();
+  if (cleaned === "" || isNothing(cleaned)) return false;
+  return !/^(no|not required|n\/a|pending|not pushed)\b/i.test(cleaned);
+}
+
+interface HeadResult {
+  head?: string;
+  malformed: boolean;
+}
+
+/**
+ * An abbreviated SHA is rejected rather than accepted: a 7-character prefix cannot prove which
+ * commit was reviewed, and proof is the entire point of the field.
+ */
+function parseHead(raw: string | undefined): HeadResult {
+  if (raw === undefined) return { malformed: false };
+  const head = raw.replace(/[*`]/g, "").trim();
+  if (head === "" || isNothing(head)) return { malformed: false };
+  if (FULL_SHA.test(head)) return { head: head.toLowerCase(), malformed: false };
+  return { malformed: true };
+}
+
+/**
+ * The per-PR table form:
+ *
+ * ```markdown
+ * | PR | Verdict | Reviewed head | Finalization |
+ * |---|---|---|---|
+ * | #84 | Approved | <40-char SHA> | pushed |
+ * ```
+ */
+function parseReviewTable(stripped: string): ParsedReviewState | undefined {
+  const table = parseTables(stripped).find(
+    (t) => columnIndex(t.headers, "pr") !== -1 && columnIndex(t.headers, "verdict") !== -1,
+  );
+  if (!table) return undefined;
+
+  const prIdx = columnIndex(table.headers, "pr");
+  const verdictIdx = columnIndex(table.headers, "verdict");
+  const headIdx = columnIndex(table.headers, "reviewed head", "head");
+  const finalIdx = columnIndex(table.headers, "finalization", "finalized");
+
+  const result: ParsedReviewState = {
+    records: [],
+    verdictMalformed: false,
+    reviewedHeadMalformed: false,
+  };
+
+  for (const row of table.rows) {
+    const prCell = cell(row, prIdx);
+    const record: ParsedReviewRecord = {
+      prNumber: prCell ? extractPrNumbers(prCell)[0] : undefined,
+      finalized: parseFinalized(cell(row, finalIdx)),
+    };
+
+    const verdictCell = cell(row, verdictIdx);
+    if (verdictCell !== undefined) {
+      const verdict = normalizeVerdict(verdictCell.replace(/\*+/g, ""));
+      if (verdict) record.verdict = verdict;
+      else result.verdictMalformed = true;
+    }
+
+    const head = parseHead(cell(row, headIdx));
+    if (head.head) record.reviewedHead = head.head;
+    if (head.malformed) result.reviewedHeadMalformed = true;
+
+    // A row claiming nothing about nothing is table padding, not a review record.
+    if (record.prNumber === undefined && !record.verdict && !record.reviewedHead) continue;
+    result.records.push(record);
+  }
+
+  return result.records.length > 0 ? result : undefined;
+}
+
+/**
+ * Read the v0.5 review fields from a Review State body.
+ *
+ * Two accepted forms: the single-record field form for the common one-PR case, and a per-PR
+ * table for a workstream spanning several. A body with neither is a workstream written before
+ * v0.5 — absent metadata, not an error.
+ */
+export function parseReviewState(body: string | undefined): ParsedReviewState {
+  const empty: ParsedReviewState = { records: [], verdictMalformed: false, reviewedHeadMalformed: false };
+  if (body === undefined) return empty;
+
+  const stripped = stripHtmlComments(stripCodeFences(body));
+
+  const table = parseReviewTable(stripped);
+  if (table) return table;
+
+  const result: ParsedReviewState = { records: [], verdictMalformed: false, reviewedHeadMalformed: false };
+  const record: ParsedReviewRecord = { finalized: false };
+  let present = false;
+
+  const verdictRaw = /\*{0,2}Verdict\*{0,2}\s*:\s*\*{0,2}\s*([^\n|]+)/i.exec(stripped)?.[1];
+  if (verdictRaw !== undefined) {
+    present = true;
+    const verdict = normalizeVerdict(verdictRaw.replace(/\*+/g, ""));
+    if (verdict) record.verdict = verdict;
+    else result.verdictMalformed = true;
+  }
+
+  const headRaw = /\*{0,2}Reviewed\s+head\*{0,2}\s*:\s*\*{0,2}\s*([^\n|]+)/i.exec(stripped)?.[1];
+  if (headRaw !== undefined) {
+    present = true;
+    const head = parseHead(headRaw);
+    if (head.head) record.reviewedHead = head.head;
+    if (head.malformed) result.reviewedHeadMalformed = true;
+  }
+
+  const prRaw = /\*{0,2}Reviewed\s+PR\*{0,2}\s*:\s*\*{0,2}\s*([^\n|]+)/i.exec(stripped)?.[1];
+  if (prRaw !== undefined) {
+    const numbers = extractPrNumbers(prRaw);
+    if (numbers.length > 0) {
+      present = true;
+      record.prNumber = numbers[0];
+    }
+  }
+
+  const finalRaw = /\*{0,2}Finalization\*{0,2}\s*:\s*\*{0,2}\s*([^\n|]+)/i.exec(stripped)?.[1];
+  if (finalRaw !== undefined && parseFinalized(finalRaw)) {
+    present = true;
+    record.finalized = true;
+  }
+
+  if (present) result.records.push(record);
+  return result;
+}
+
 // ---------------------------------------------------------------------------
 // Workstream file
 // ---------------------------------------------------------------------------
@@ -137,6 +322,8 @@ export interface ParsedWorkstreamFile {
   status?: WorkstreamStatus;
   createdAt?: string;
   updatedAt?: string;
+  /** From a `**Build OS:** v0.5` header field. Absent means "inherit the project's pin". */
+  protocolVersion?: string;
   goal?: string;
   nextStep?: string;
   openDecisions: OpenDecision[];
@@ -146,6 +333,7 @@ export interface ParsedWorkstreamFile {
   buildCardReady: boolean;
   implementationState?: string;
   reviewState?: string;
+  review: ParsedReviewState;
 }
 
 /**
@@ -218,6 +406,7 @@ export function parseWorkstreamFile(markdown: string): ParsedWorkstreamFile {
     phase: parsePhase(headerField(markdown, "Phase")),
     status: parseStatus(headerField(markdown, "Status")),
     createdAt: headerField(markdown, "Created"),
+    protocolVersion: parseProtocolVersion(markdown),
     updatedAt: headerField(markdown, "Updated"),
     goal: sectionText("Goal"),
     nextStep: sectionText("Next Step"),
@@ -234,6 +423,7 @@ export function parseWorkstreamFile(markdown: string): ParsedWorkstreamFile {
     buildCardReady: !isNothing(buildCard),
     implementationState,
     reviewState: sectionText("Review State"),
+    review: parseReviewState(findSection(sections, "Review State")?.body),
   };
 }
 
