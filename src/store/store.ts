@@ -375,27 +375,42 @@ export class CompanionStore {
     ).map(toAttention);
   }
 
-  /** Items that first appeared after a sequence number and are still true. */
-  attentionOpenedAfter(seq: number): TrackedAttentionItem[] {
-    return (
-      this.#db
-        .prepare(
-          `SELECT * FROM attention_items WHERE first_seen_seq > ? AND cleared_at IS NULL
-           ORDER BY first_seen_seq ASC`,
-        )
-        .all(seq) as unknown as AttentionRow[]
-    ).map(toAttention);
+  /**
+   * Items that first appeared after a moment and are still true. `undefined` means all of them.
+   *
+   * Keyed on time rather than on the event sequence, because attention is not always caused by
+   * an event. A pull request goes stale because a threshold passed while nothing happened, so
+   * the item opens on a sync that appended nothing and its recorded sequence is identical to
+   * the cursor's. A `sequence >` comparison drops exactly those items — the ones that arrived
+   * silently, which are the ones the owner most needs told about. The read cursor records when
+   * the owner checked as well as how far, and this is what that timestamp is for.
+   */
+  attentionOpenedAfter(after?: string): TrackedAttentionItem[] {
+    const rows = after
+      ? this.#db
+          .prepare(
+            `SELECT * FROM attention_items WHERE first_seen_at > ? AND cleared_at IS NULL
+             ORDER BY first_seen_at ASC, id ASC`,
+          )
+          .all(after)
+      : this.#db
+          .prepare(`SELECT * FROM attention_items WHERE cleared_at IS NULL ORDER BY first_seen_at ASC, id ASC`)
+          .all();
+    return (rows as unknown as AttentionRow[]).map(toAttention);
   }
 
-  /** Items that stopped being true after a sequence number. */
-  attentionResolvedAfter(seq: number): TrackedAttentionItem[] {
-    return (
-      this.#db
-        .prepare(
-          `SELECT * FROM attention_items WHERE cleared_seq > ? ORDER BY cleared_seq ASC`,
-        )
-        .all(seq) as unknown as AttentionRow[]
-    ).map(toAttention);
+  /** Items that stopped being true after a moment. `undefined` means all resolved items. */
+  attentionResolvedAfter(after?: string): TrackedAttentionItem[] {
+    const rows = after
+      ? this.#db
+          .prepare(
+            `SELECT * FROM attention_items WHERE cleared_at > ? ORDER BY cleared_at ASC, id ASC`,
+          )
+          .all(after)
+      : this.#db
+          .prepare(`SELECT * FROM attention_items WHERE cleared_at IS NOT NULL ORDER BY cleared_at ASC, id ASC`)
+          .all();
+    return (rows as unknown as AttentionRow[]).map(toAttention);
   }
 
   // -------------------------------------------------------------------------

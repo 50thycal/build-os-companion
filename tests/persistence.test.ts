@@ -295,7 +295,7 @@ describe("attention lifecycle", () => {
 
     expect(second.resolvedAttention.map((a) => a.id)).toContain(decisionItem.id);
     expect(h.store.openAttention(PARTY_GAMES.id).map((a) => a.id)).not.toContain(decisionItem.id);
-    expect(h.store.attentionResolvedAfter(0).map((a) => a.id)).toContain(decisionItem.id);
+    expect(h.store.attentionResolvedAfter().map((a) => a.id)).toContain(decisionItem.id);
   });
 
   it("tracks only items that need the owner, not the engine's suppressions", async () => {

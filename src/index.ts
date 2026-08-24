@@ -24,3 +24,4 @@ export * from "./store/store.ts";
 export * from "./ledger/sqlite-ledger.ts";
 export * from "./config/followed.ts";
 export * from "./sync/durable-sync.ts";
+export * from "./briefing/index.ts";
