@@ -58,12 +58,22 @@ Covered by design PR #4 — `plans/PROJECT_INTELLIGENCE_FEED.md` §10, §19 Phas
 
 ## Implementation State
 
-Parsers and integrity rules implemented as pure functions in PR #6 against fixtures; live
-per-repository sync not yet wired.
+Complete and shipped in PR #1. Live per-repository sync is wired, with detection and path
+overrides, and the parsers have met real artifacts — which broke three assumptions the
+fixture-only tests never touched:
+
+- list items were read to the end of the *line*, not the end of the item, so every hard-wrapped
+  open decision was truncated mid-clause;
+- a decision entry is a paragraph, so `question` is now its opening sentences and `detail` keeps
+  the entry whole;
+- the two followed repositories lay their artifacts out differently — party-games keeps
+  `docs/DECISIONS.md`, build-os keeps `DECISIONS.md` at its root — so detection probes candidate
+  locations rather than assuming the convention.
 
 ## Review State
 
-Not started.
+Not reviewed. Both repositories now parse with no integrity warnings and no conflicts, including
+this repository's own board.
 
 ## Related Decisions
 
@@ -71,8 +81,10 @@ DEC-010
 
 ## Related PRs
 
-#6
+- [#1](https://github.com/50thycal/build-os-companion/pull/1) — live sync, path discovery, the three parser fixes
+- build-os #6 — original parsers
 
 ## Next Step
 
-Promote the Phase 0 parsers to a live per-repository sync, with detection and path overrides.
+Owner review of the parsed state against the source files: does the Project screen say what the
+artifacts actually say? D1 stays open.

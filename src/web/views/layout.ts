@@ -118,12 +118,13 @@ h2.section:first-child { margin-top: 4px; }
   display: inline-flex; align-items: center;
   min-height: 44px; padding-block: 12px; margin-block: -12px;
 }
-a.chip { min-height: 32px; padding-block: 6px; margin-block: -2px; }
+a.chip { min-height: 44px; padding-block: 12px; margin-block: -9px; }
 
 details.evidence { margin-top: 8px; }
 details.evidence summary {
   cursor: pointer; font-size: 13px; color: var(--muted);
-  min-height: 32px; display: flex; align-items: center;
+  /* A disclosure toggle is a tap target like any other: 44px, per the same guideline. */
+  min-height: 44px; display: flex; align-items: center;
 }
 details.evidence ul { margin: 6px 0 0; padding-left: 18px; font-size: 13px; color: var(--muted); }
 details.evidence li { margin: 3px 0; }

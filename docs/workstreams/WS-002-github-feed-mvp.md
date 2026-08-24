@@ -37,12 +37,15 @@ blocked, what happens next.
 
 - **Polling first, webhooks later.** Reconciliation correctness before latency.
 - **Cards are not commit logs.** Raw commits and GitHub metadata do not go in the feed.
+- **Server-rendered HTML, no framework, no build step.** (Was D1, settled in PR #1.) The bet that
+  card assembly should stay pure functions paid off: the UI really is a thin renderer over
+  `FeedCard[]`, which is what makes "no screen creates a second interpretation pipeline"
+  testable rather than aspirational. Hosting needs a persistent disk for SQLite, which rules out
+  serverless; see `docs/DEPLOYMENT.md`.
 
 ## Open Decisions
 
-- **D1. Web stack and hosting for the owner-facing UI.** Deferred until the Companion repository
-  exists; the Phase 0 package deliberately keeps card assembly as pure functions so the UI is a
-  thin renderer over `FeedCard[]` whichever stack wins.
+None. D1 is settled above.
 
 ## Assumptions
 
@@ -59,12 +62,19 @@ Covered by design PR #4 — `plans/PROJECT_INTELLIGENCE_FEED.md` §11, §19 Phas
 
 ## Implementation State
 
-Phase 1 ingestion, projection, and card assembly landing in PR #6, headless (CLI) — no web UI,
-auth, or database yet.
+Complete and shipped in PR #1. Ingestion, projection and card assembly now have a Feed screen in
+front of them: server-rendered, mobile-first, reading `buildFeed` from persisted events and
+persisted state rather than from GitHub. Cards collapse several events about one entity into
+one, and a test asserts that.
+
+Ingestion was corrected against real payloads along the way — `merged` is absent from the pull
+request *list* endpoint, `mergeable_state` answers `unknown` on first read of any open PR, and
+CI has to be read from commit statuses as well as check runs. See `docs/LIVE_SYNC_VALIDATION.md`.
 
 ## Review State
 
-Not started.
+Not reviewed. Card collapsing has never been judged against a busy day in a real repository,
+which is the thing worth checking.
 
 ## Related Decisions
 
@@ -72,9 +82,10 @@ DEC-009
 
 ## Related PRs
 
-#6
+- [#1](https://github.com/50thycal/build-os-companion/pull/1) — the Feed screen and the live-data ingestion fixes
+- build-os #6 — original card assembly
 
 ## Next Step
 
-Wire polling sync and feed cards onto the Phase 0 domain, then decide D1 once the Companion
-repository exists.
+Owner review of the Feed against real Party Games activity: does card collapsing hide anything
+that mattered, and does ranking put the right thing at the top?

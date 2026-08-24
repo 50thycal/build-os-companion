@@ -126,7 +126,7 @@ prefix and credits those events to an `AGENT` actor — which is what lets the f
 | `tests/live-sync-integration.test.ts` | The whole pipeline over real data; repeated sync; sync failure |
 | `fixtures/github/live/`, `fixtures/build-os/live/` | The recorded payloads and artifacts themselves |
 
-161 tests, up from 120.
+161 tests at the end of this phase, up from 120. (The PR total is higher; the figure here is the milestone this validation produced.)
 
 ---
 

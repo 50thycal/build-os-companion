@@ -104,8 +104,13 @@ async function handle(req: IncomingMessage, res: ServerResponse, app: CompanionA
     if (path === "/briefing/checked") {
       const body = new URLSearchParams(await readBody(req));
       const sequence = Number(body.get("sequence"));
-      // Only an explicit, well-formed submission moves the cursor.
-      if (Number.isFinite(sequence) && sequence >= 0) app.markChecked(sequence);
+      const checkpointAt = body.get("checkpointAt") ?? undefined;
+
+      // Only an explicit, well-formed submission moves the cursor, and `markChecked` validates
+      // both dimensions against the ledger and the clock rather than trusting the form.
+      if (app.markChecked(sequence, checkpointAt) === undefined) {
+        console.warn(`[companion] ignored mark-as-read: sequence=${body.get("sequence")}`);
+      }
       redirect(res, "/briefing");
       return;
     }

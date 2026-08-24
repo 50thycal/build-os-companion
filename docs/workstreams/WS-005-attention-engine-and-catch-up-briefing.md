@@ -42,8 +42,10 @@ suppresses: normal commits · CI running · agent resolving review comments
 ## Open Decisions
 
 - **D1. Staleness thresholds.** How long is "stalled" for a PR, a workstream, a session?
-  Recommendation: start at 72h / 7d / 4h respectively, configurable, and tune from real use —
-  guessing precisely now would be false precision.
+  Shipped at 72h / 7d / 4h respectively and configurable, but still an open decision rather than
+  a settled one: nothing has calibrated them against real use, and the whole value of Needs Me
+  rests on it being quiet when it should be. This is the decision the next step exists to
+  answer, and it cannot be answered from a fixture.
 
 ## Assumptions
 
@@ -59,12 +61,29 @@ Covered by design PR #4 — `plans/PROJECT_INTELLIGENCE_FEED.md` §12, §13, §1
 
 ## Implementation State
 
-Deterministic rule set, severity model, and reason codes implemented in PR #6 with table-driven
-tests. `Since I last checked` and the written briefing not yet built.
+Complete and shipped in PR #1. The rule set and severity model came across from build-os PR #6;
+everything downstream of them was built here:
+
+- a Needs Me screen where every item answers four questions, the fourth being what the system
+  looked at to decide — a classification the owner cannot interrogate is one they learn to
+  ignore;
+- `Since I last checked`, grouped by meaning rather than listed in order, with each entity in
+  exactly one section;
+- a fact pack over the six target sections where every fact carries references back to the
+  events and entities behind it, and a deterministic renderer over it.
+
+Attention lifecycle is compared against when the owner last checked rather than against the
+event sequence, because an item can open with no event behind it — a PR goes stale when a
+threshold passes while nothing happens — and those are the ones most worth reporting.
 
 ## Review State
 
-Not started.
+Reviewed once, independently, on PR #1. One merge-blocking defect found and fixed: the read
+cursor's sequence dimension was monotonic but its timestamp dimension was not, so a stale
+browser tab re-submitting an older briefing could consume attention that had appeared after that
+briefing was generated. Both dimensions now take `MAX`, the submitted checkpoint is the
+briefing's own `generatedAt` rather than the click time, a sequence above the ledger maximum is
+refused, and a future timestamp is clamped. Four regression cases cover it.
 
 ## Related Decisions
 
@@ -72,9 +91,10 @@ DEC-009
 
 ## Related PRs
 
-#6
+- [#1](https://github.com/50thycal/build-os-companion/pull/1) — Needs Me, Since I last checked, the fact pack, the cursor fix
+- build-os #6 — the original rule set
 
 ## Next Step
 
-Extend the deterministic rules into the `Needs Me` view and a `Since I last checked` narrative,
-then produce the fact pack the written briefing consumes.
+Owner uses Needs Me during real work and rules on D1: does it surface what genuinely needs them,
+and does it stay quiet otherwise?

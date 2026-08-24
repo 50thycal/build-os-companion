@@ -19,8 +19,14 @@ try {
 
 const base = process.argv[2] ?? "http://127.0.0.1:8787";
 const DEVICE = process.env.COMPANION_DEVICE ?? "iPhone 13";
-/** Apple's Human Interface Guidelines put the minimum at 44pt; 32 is the hard floor here. */
-const MIN_TAP = 32;
+/**
+ * Apple's Human Interface Guidelines put the minimum at 44pt, and that is what this enforces.
+ *
+ * It previously failed only below 32px while citing 44 in the same breath, which meant the
+ * check quietly certified something weaker than it claimed. A guideline the checker does not
+ * enforce is a comment, not a check.
+ */
+const MIN_TAP = Number(process.env.COMPANION_MIN_TAP ?? 44);
 
 const PAGES = [
   ["feed", "/"],

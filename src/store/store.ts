@@ -436,15 +436,28 @@ export class CompanionStore {
   /**
    * Advance the read cursor. Only ever called from an explicit owner action.
    *
-   * Never moves backwards: two devices marking the same briefing read, or a stale page posting
-   * an old sequence, must not un-read things the owner has already been shown.
+   * **Both dimensions are monotonic**, and that is not symmetry for its own sake. The cursor
+   * records two different things — how far through the events the owner has read (`seq`), and
+   * the moment the briefing they read was true as of (`at`) — because attention can change
+   * without any event: a pull request goes stale when a threshold passes, so the item exists
+   * only on the timestamp dimension.
+   *
+   * Guarding only the sequence therefore leaves the more fragile half open. A stale browser tab
+   * re-submitting an older briefing would keep `seq` intact via `MAX` while dragging `at`
+   * forward to the moment of the click, silently consuming every attention item that had
+   * appeared in between — items that briefing never contained. Taking `MAX` of both means a
+   * late submission of an old briefing is a no-op, which is what it should be.
+   *
+   * `at` is the moment the submitted briefing was *generated*, not the moment the button was
+   * pressed. Those differ by however long the page sat open, and only the first is a claim
+   * about what the owner actually saw.
    */
   markChecked(ownerUserId: string, seq: number, at: string): ReadCursor {
     this.#db
       .prepare(
         `INSERT INTO read_cursor (owner_user_id, last_checked_at, last_seq) VALUES (?, ?, ?)
          ON CONFLICT(owner_user_id) DO UPDATE SET
-           last_checked_at = excluded.last_checked_at,
+           last_checked_at = MAX(read_cursor.last_checked_at, excluded.last_checked_at),
            last_seq = MAX(read_cursor.last_seq, excluded.last_seq)`,
       )
       .run(ownerUserId, at, seq);

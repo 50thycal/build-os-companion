@@ -239,9 +239,32 @@ export class CompanionApp {
    * page. Rendering the page does not call it, and neither does syncing, because a cursor that
    * advances because something drew a screen would silently consume the one piece of state the
    * owner is relying on.
+   *
+   * `checkpointAt` is the submitted briefing's `generatedAt`: what the owner saw, rather than
+   * when they got round to pressing the button. Both are validated against the server rather
+   * than trusted, because both arrive from a form:
+   *
+   * - a sequence above anything the ledger holds is **refused outright**. There is no
+   *   legitimate way to produce one, and accepting it would mark events read before they
+   *   existed — the cursor would sit ahead of the ledger and suppress everything until it
+   *   caught up.
+   * - a checkpoint in the future is **clamped to now** rather than refused, because a small
+   *   clock difference between a phone and the server is ordinary and should not cost the
+   *   owner their briefing.
+   *
+   * Returns `undefined` when the submission was refused, so a caller can tell the difference
+   * between "marked" and "ignored".
    */
-  markChecked(sequence: number): ReadCursor {
-    return this.#store.markChecked(this.#ownerLogin, sequence, this.now().toISOString());
+  markChecked(sequence: number, checkpointAt?: string): ReadCursor | undefined {
+    const latest = this.#ledger.latestSequence();
+    if (!Number.isFinite(sequence) || sequence < 0 || sequence > latest) return undefined;
+
+    const now = this.now().toISOString();
+    const parsed = checkpointAt ? Date.parse(checkpointAt) : Number.NaN;
+    const at =
+      Number.isNaN(parsed) || checkpointAt! > now ? now : new Date(parsed).toISOString();
+
+    return this.#store.markChecked(this.#ownerLogin, sequence, at);
   }
 
   // -------------------------------------------------------------------------

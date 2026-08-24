@@ -71,13 +71,25 @@ the written fact pack proves accurate in real use.
 
 Shipped in [#1](https://github.com/50thycal/build-os-companion/pull/1): extraction with history,
 seven live-data fixes, durable SQLite persistence, followed-project configuration, the four-screen
-web application, the read cursor, and the fact pack. 221 tests.
+web application, the read cursor, and the fact pack. 236 tests.
 
 ## Review State
 
-Not reviewed. The application has never been used against real work, which is the only thing that
-can tell the owner whether the attention rules are calibrated and whether the briefing is
-accurate enough to trust.
+Reviewed once, independently, on PR #1. Three corrections, all applied:
+
+- **Merge-blocking.** The read cursor's timestamp dimension was not monotonic while its sequence
+  dimension was, so a stale browser tab re-submitting an older briefing could consume attention
+  that appeared after that briefing was generated — and `/briefing/checked` accepted a sequence
+  above the ledger maximum, which would have suppressed future events. Both fixed under WS-005.
+- These workstream files disagreed with the board: headers said REVIEW while bodies still
+  described the pre-build state. Reconciled — the first real Build OS integrity case this project
+  has had, and it was its own.
+- The mobile checker cited Apple's 44pt guideline while failing only below 32px. It now enforces
+  44, and the chips and disclosure toggles were raised to match.
+
+Still not reviewed in the way that matters: the application has never been used against real
+work, which is the only thing that can tell the owner whether the attention rules are calibrated
+and whether the briefing is accurate enough to trust.
 
 ## Next Step
 

@@ -115,6 +115,11 @@ export function briefingView(pack: FactPack, now: Date): string {
   parts.push(
     html`<form method="post" action="/briefing/checked" style="margin-top:18px">
       <input type="hidden" name="sequence" value="${String(since.toSequence)}">
+      <!--
+        The moment this briefing was generated, not the moment the button is pressed. A page
+        left open for an hour must not consume attention that appeared while it sat there.
+      -->
+      <input type="hidden" name="checkpointAt" value="${since.generatedAt}">
       <button class="btn" type="submit" ${since.toSequence === since.fromSequence ? "disabled" : ""}>
         ${since.isFirstLook ? "Start tracking from here" : "Mark as read"}
       </button>

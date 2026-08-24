@@ -48,7 +48,10 @@ Two properties carry the design:
 
 ## Open Decisions
 
-None currently. The persistence engine (Postgres assumed) is implementation discretion.
+None. The persistence engine was the one open question here and it is settled: SQLite via
+`node:sqlite`, chosen because it is synchronous — which let the durable ledger implement the
+existing `EventLedger` interface unchanged, so nothing above it knows persistence exists. The
+interface stays the seam if a server-backed store is ever needed.
 
 ## Assumptions
 
@@ -66,12 +69,24 @@ Covered by design PR #4 — `plans/PROJECT_INTELLIGENCE_FEED.md` §7, §19 Phase
 
 ## Implementation State
 
-Phase 0 landing in PR #6 (`companion/` package: domain models, event taxonomy, fingerprints,
-provenance, precedence resolver, projection). Checkpoint contract in PR #5.
+Complete and shipped in PR #1. Domain models, event taxonomy, fingerprints, provenance and the
+precedence resolver came across from build-os PR #6; the durable half was built here:
+
+- `SqliteEventLedger` implementing the existing interface, with idempotency enforced by a unique
+  index on `source_fingerprint` rather than by application code — which is what makes it hold
+  across a restart.
+- An insertion sequence distinct from `occurred_at`, because the read cursor has to order by
+  when the Companion *learned* something, not when it happened.
+- Artifact snapshots alongside events. The ledger cannot stand in for them: a workstream that
+  gains an open decision without changing phase emits no event at all.
+- Attention lifecycle rows carrying first-seen and cleared timestamps.
 
 ## Review State
 
-Not started.
+Not reviewed. An independent review of PR #1 found the read cursor's timestamp dimension was not
+monotonic while its sequence dimension was — a stale browser tab could consume attention that
+appeared after the briefing it was submitting. Fixed under WS-005 with four regression cases.
+Awaiting owner review.
 
 ## Related Decisions
 
@@ -79,9 +94,10 @@ DEC-008 (application boundary), DEC-009 (ledger architecture and source preceden
 
 ## Related PRs
 
-#5, #6
+- [#1](https://github.com/50thycal/build-os-companion/pull/1) — durable ledger, snapshots, attention lifecycle
+- build-os #5, #6 — the original domain, before extraction
 
 ## Next Step
 
-Land Phase 0 domain, parsers, attention rules, and fixtures; confirm the acceptance properties
-(idempotency, provenance survival, state rebuild, precedence) are covered by tests.
+Owner review of the persistence design, particularly whether the two orderings (`occurred_at`
+versus insertion sequence) are drawn where they should be.
