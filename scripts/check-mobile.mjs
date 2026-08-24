@@ -9,7 +9,13 @@
  *   node scripts/check-mobile.mjs [baseUrl]
  */
 
-import { chromium, devices } from "playwright";
+let chromium, devices;
+try {
+  ({ chromium, devices } = await import("playwright"));
+} catch {
+  console.error("This check needs Playwright: npm i -D playwright && npx playwright install chromium");
+  process.exit(2);
+}
 
 const base = process.argv[2] ?? "http://127.0.0.1:8787";
 const DEVICE = process.env.COMPANION_DEVICE ?? "iPhone 13";
