@@ -1,0 +1,18 @@
+{
+  "$comment": "GET /repos/50thycal/party-games/pulls/142 — the DETAIL endpoint for a PR that was open at the time of observation (2026-08-24). `mergeable_state` is `unknown`: GitHub computes mergeability asynchronously and the first read after a push returns `unknown`. No retry means the Companion never learns whether an open PR conflicts.",
+  "payload": {
+    "number": 142,
+    "title": "fix(subway): preserve undo across no-op schedule selections",
+    "state": "open",
+    "draft": false,
+    "merged": false,
+    "mergeable_state": "unknown",
+    "created_at": "2026-08-24T11:05:02Z",
+    "updated_at": "2026-08-24T11:51:58Z",
+    "head": { "ref": "codex/ws-002-noop-undo-fix", "sha": "4efb47156d2e8889368d0e51fb9a9dcfb1e980d0" },
+    "base": { "ref": "main" },
+    "user": { "login": "50thycal", "id": 62454092 },
+    "requested_reviewers": [],
+    "html_url": "https://github.com/50thycal/party-games/pull/142"
+  }
+}

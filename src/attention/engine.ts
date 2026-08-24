@@ -29,6 +29,7 @@ import type {
   WorkstreamState,
 } from "../domain/state.ts";
 import type { SourceRef } from "../domain/provenance.ts";
+import { describeQuietPullRequest } from "../domain/describe.ts";
 
 export interface AttentionInput {
   state: ProjectState;
@@ -184,7 +185,7 @@ function pullRequestRules(
       entityId,
       severity: "NONE",
       reasonCode: "AUTONOMOUS_PROGRESS",
-      reasonText: `PR #${pr.number} is healthy: ${pr.ciState.toLowerCase()} CI, review ${pr.reviewState.toLowerCase().replace("_", " ")}.`,
+      reasonText: describeQuietPullRequest(pr),
       recommendedAction: "Nothing.",
       evidence,
     });

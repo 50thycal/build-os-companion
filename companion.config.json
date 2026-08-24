@@ -1,0 +1,8 @@
+{
+  "$comment": "The projects this Companion follows. Add a repository by adding an entry; nothing else needs to change. Optional per-entry keys: displayName, defaultBranch, enabled, buildOs, and paths (projectModel, decisions, activeWork, workstreamDir) for a repository that keeps its Build OS artifacts somewhere detection would not find them.",
+  "ownerLogin": "50thycal",
+  "projects": [
+    { "repository": "50thycal/party-games", "displayName": "Party Games" },
+    { "repository": "50thycal/build-os", "displayName": "Build OS" }
+  ]
+}

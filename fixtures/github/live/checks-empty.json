@@ -1,0 +1,6 @@
+{
+  "$comment": "GET /repos/50thycal/party-games/commits/{sha}/check-runs and GET /repos/50thycal/party-games/actions/workflows, observed 2026-08-24. party-games has zero workflows and zero check runs; 50thycal/build-os has no .github directory at all. Neither followed repository produces any Checks-API signal, so `CiState` is NONE for every real PR.",
+  "checkRuns": { "total_count": 0, "check_runs": [] },
+  "workflows": { "total_count": 0, "workflows": [] },
+  "combinedStatus": { "state": "pending", "total_count": 0, "statuses": [] }
+}

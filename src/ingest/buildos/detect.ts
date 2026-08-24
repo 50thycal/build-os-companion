@@ -39,32 +39,51 @@ export function detectBuildOs(input: DetectionInput): DetectionResult {
   if (version) evidence.push(`agent instructions declare Build OS v${version}`);
   else if (/build\s*os/i.test(instructions)) evidence.push("agent instructions mention Build OS");
 
-  const resolve = (override: string | undefined, fallback: string, label: string): string => {
+  /**
+   * Where each artifact is allowed to live, most conventional first.
+   *
+   * Build OS permits repository-specific documentation conventions, and the two repositories
+   * the Companion follows genuinely differ: party-games keeps `docs/DECISIONS.md`, while
+   * build-os keeps `DECISIONS.md` at the repository root and has no project model at all.
+   * Resolving to the convention regardless of what is there made build-os report zero
+   * decisions — not an error, just a quietly empty section, which is the worst way for this to
+   * fail. So the candidates are probed against the paths the repository actually has.
+   */
+  const CANDIDATES: Record<keyof BuildOsPaths, string[]> = {
+    projectModel: [DEFAULT_BUILD_OS_PATHS.projectModel, "PROJECT_MODEL.md", "docs/project-model.md"],
+    decisions: [DEFAULT_BUILD_OS_PATHS.decisions, "DECISIONS.md", "docs/decisions.md"],
+    activeWork: [DEFAULT_BUILD_OS_PATHS.activeWork, "docs/ACTIVE.md", "ACTIVE.md"],
+    workstreamDir: [DEFAULT_BUILD_OS_PATHS.workstreamDir, "workstreams", "docs/workstream"],
+  };
+
+  const hasDirectory = (dir: string): boolean =>
+    input.paths.some((p) => p.startsWith(`${dir}/`));
+
+  const resolve = (
+    key: keyof BuildOsPaths,
+    override: string | undefined,
+    label: string,
+    isDirectory = false,
+  ): string => {
     if (override) {
       evidence.push(`${label} overridden to ${override}`);
       return override;
     }
-    if (pathSet.has(fallback)) evidence.push(`found ${fallback}`);
-    return fallback;
+    const candidates = CANDIDATES[key];
+    const found = candidates.find((c) => (isDirectory ? hasDirectory(c) : pathSet.has(c)));
+    if (found) {
+      evidence.push(found === candidates[0] ? `found ${found}` : `found ${found} (non-default location)`);
+      return found;
+    }
+    // Nothing matched: fall back to the convention so the path is still reportable.
+    return candidates[0]!;
   };
 
   const paths: BuildOsPaths = {
-    projectModel: resolve(
-      input.overrides?.projectModel,
-      DEFAULT_BUILD_OS_PATHS.projectModel,
-      "project model",
-    ),
-    decisions: resolve(input.overrides?.decisions, DEFAULT_BUILD_OS_PATHS.decisions, "decisions"),
-    activeWork: resolve(
-      input.overrides?.activeWork,
-      DEFAULT_BUILD_OS_PATHS.activeWork,
-      "active work",
-    ),
-    workstreamDir: resolve(
-      input.overrides?.workstreamDir,
-      DEFAULT_BUILD_OS_PATHS.workstreamDir,
-      "workstream directory",
-    ),
+    projectModel: resolve("projectModel", input.overrides?.projectModel, "project model"),
+    decisions: resolve("decisions", input.overrides?.decisions, "decisions"),
+    activeWork: resolve("activeWork", input.overrides?.activeWork, "active work"),
+    workstreamDir: resolve("workstreamDir", input.overrides?.workstreamDir, "workstream directory", true),
   };
 
   const hasOverrides = Object.keys(input.overrides ?? {}).length > 0;

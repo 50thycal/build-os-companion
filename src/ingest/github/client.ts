@@ -33,6 +33,16 @@ export interface ObserveOptions {
   updatedSince?: string;
   /** Cap on PRs pulled in one cycle. */
   limit?: number;
+  /**
+   * How many extra reads to spend resolving `mergeable_state: "unknown"` on an *open* PR.
+   * Zero disables the retry. Closed and merged PRs are never retried: GitHub stops computing
+   * mergeability for them, so the answer would never arrive.
+   */
+  mergeabilityRetries?: number;
+  /** Delay before each mergeability retry. Injectable so tests do not sleep. */
+  sleep?: (ms: number) => Promise<void>;
+  /** Base delay in milliseconds for the mergeability retry. */
+  mergeabilityRetryDelayMs?: number;
 }
 
 export class GitHubApiError extends Error {
@@ -43,6 +53,22 @@ export class GitHubApiError extends Error {
     this.name = "GitHubApiError";
     this.statusCode = statusCode;
   }
+}
+
+interface RawCommitStatus {
+  id: number;
+  state: "error" | "failure" | "pending" | "success";
+  context: string;
+  description?: string | null;
+  target_url?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface RawCombinedStatus {
+  state: string;
+  total_count: number;
+  statuses: RawCommitStatus[];
 }
 
 interface RawPull {
@@ -92,6 +118,53 @@ export class HttpGitHubClient implements GitHubPort {
     return (await response.json()) as T;
   }
 
+  /**
+   * Resolve `mergeable_state` for an open PR.
+   *
+   * GitHub computes mergeability in the background and answers `unknown` until it finishes, so
+   * a single read of a recently-pushed PR essentially never carries the answer. Leaving it
+   * `unknown` is not a neutral outcome: `MERGE_CONFLICT` is one of the attention engine's rules,
+   * and a permanently-unknown mergeability means that rule silently never fires. A conflicted PR
+   * would then sit on the Feed looking healthy, which is exactly the kind of quiet wrong answer
+   * the Needs Me screen exists to not produce.
+   */
+  async #resolveMergeability(
+    repositoryFullName: string,
+    detail: RawPull,
+    options: ObserveOptions,
+  ): Promise<RawPull> {
+    const retries = options.mergeabilityRetries ?? 2;
+    const delay = options.mergeabilityRetryDelayMs ?? 1000;
+    const sleep = options.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+
+    let current = detail;
+    for (let attempt = 0; attempt < retries; attempt += 1) {
+      // Only an open PR is worth waiting for. GitHub stops computing mergeability once a PR is
+      // closed or merged, so retrying those spends requests on an answer that will never come.
+      if (current.state !== "open" || (current.mergeable_state ?? "unknown") !== "unknown") break;
+      await sleep(delay * (attempt + 1));
+      current = await this.#get<RawPull>(`/repos/${repositoryFullName}/pulls/${current.number}`);
+    }
+    return current;
+  }
+
+  /**
+   * Commit statuses for a head SHA, mapped onto the same shape as check runs.
+   *
+   * A missing or empty combined status is a normal answer, not a failure.
+   */
+  async #commitStatuses(repositoryFullName: string, sha: string): Promise<RawCommitStatus[]> {
+    try {
+      const combined = await this.#get<RawCombinedStatus>(
+        `/repos/${repositoryFullName}/commits/${sha}/status`,
+      );
+      return combined.statuses ?? [];
+    } catch (error) {
+      if (error instanceof GitHubApiError && error.statusCode === 404) return [];
+      throw error;
+    }
+  }
+
   async observe(repositoryFullName: string, options: ObserveOptions = {}): Promise<GitHubObservation> {
     const observedAt = new Date().toISOString();
     const repo = await this.#get<{ default_branch: string }>(`/repos/${repositoryFullName}`);
@@ -108,13 +181,18 @@ export class HttpGitHubClient implements GitHubPort {
 
     const pullRequests: GitHubPullRequestObservation[] = [];
     for (const summary of relevant) {
-      // The list endpoint omits mergeable_state; the detail endpoint is the only source.
-      const detail = await this.#get<RawPull>(
+      // The list endpoint omits both `merged` and `mergeable_state`; the detail endpoint is the
+      // only source for either.
+      const initial = await this.#get<RawPull>(
         `/repos/${repositoryFullName}/pulls/${summary.number}`,
       );
+      const detail = await this.#resolveMergeability(repositoryFullName, initial, options);
+
       const reviews = await this.#get<
         { id: number; user?: { login?: string }; state: string; submitted_at?: string; html_url: string }[]
       >(`/repos/${repositoryFullName}/pulls/${summary.number}/reviews`);
+
+      // Both halves of GitHub's CI surface. A repository may use either, both, or neither.
       const checks = await this.#get<{
         check_runs: {
           id: number;
@@ -126,9 +204,10 @@ export class HttpGitHubClient implements GitHubPort {
           html_url?: string;
         }[];
       }>(`/repos/${repositoryFullName}/commits/${detail.head.sha}/check-runs`);
+      const statuses = await this.#commitStatuses(repositoryFullName, detail.head.sha);
 
       pullRequests.push(
-        toObservation(detail, reviews, checks.check_runs, repositoryFullName),
+        toObservation(detail, reviews, checks.check_runs, statuses, repositoryFullName),
       );
     }
 
@@ -177,6 +256,50 @@ export class HttpGitHubClient implements GitHubPort {
   }
 }
 
+/**
+ * A commit status expressed as a check observation, so downstream code has one CI shape.
+ *
+ * `error` and `failure` are both failures; GitHub distinguishes them by cause, not by outcome,
+ * and nothing the owner decides turns on which one it was.
+ */
+function statusToCheck(status: RawCommitStatus, fallbackUrl: string): GitHubCheckObservation {
+  const completed = status.state === "success" || status.state === "failure" || status.state === "error";
+  return {
+    id: status.id,
+    name: status.context,
+    kind: "COMMIT_STATUS",
+    status: completed ? "completed" : "in_progress",
+    conclusion: completed ? (status.state === "success" ? "success" : "failure") : undefined,
+    startedAt: status.created_at,
+    completedAt: completed ? status.updated_at : undefined,
+    htmlUrl: status.target_url ?? fallbackUrl,
+  };
+}
+
+const AGENT_BRANCH_PREFIX = /^(claude|codex|devin|copilot|cursor|aider|jules)\//i;
+
+/**
+ * Whether a pull request was written by a coding agent rather than typed by the owner.
+ *
+ * Deliberately based on the branch prefix rather than the author. On the owner's repositories
+ * an agent pushes under the owner's own GitHub account, so `user.type` is `User` for hand-written
+ * and agent-written work alike, and every agent PR would otherwise be indistinguishable from
+ * something the owner sat down and wrote.
+ */
+export function isAgentBranch(headRef: string): boolean {
+  return AGENT_BRANCH_PREFIX.test(headRef);
+}
+
+/**
+ * Whether the author is a bot account.
+ *
+ * `user.type` is the documented signal but is absent from some payload shapes, so the `[bot]`
+ * login suffix — which GitHub reserves for app accounts — is checked as well.
+ */
+export function isBotAuthor(login: string, type?: string): boolean {
+  return type === "Bot" || /\[bot\]$/i.test(login);
+}
+
 function toObservation(
   pr: RawPull,
   reviews: { id: number; user?: { login?: string }; state: string; submitted_at?: string; html_url: string }[],
@@ -189,6 +312,7 @@ function toObservation(
     completed_at?: string | null;
     html_url?: string;
   }[],
+  commitStatuses: RawCommitStatus[],
   repositoryFullName: string,
 ): GitHubPullRequestObservation {
   const mappedReviews: GitHubReviewObservation[] = reviews
@@ -201,21 +325,31 @@ function toObservation(
       htmlUrl: r.html_url,
     }));
 
-  const mappedChecks: GitHubCheckObservation[] = checkRuns.map((c) => ({
-    id: c.id,
-    name: c.name,
-    status: c.status as GitHubCheckObservation["status"],
-    conclusion: (c.conclusion ?? undefined) as GitHubCheckObservation["conclusion"],
-    startedAt: c.started_at ?? pr.updated_at,
-    completedAt: c.completed_at ?? undefined,
-    htmlUrl: c.html_url ?? pr.html_url,
-  }));
+  const htmlUrl = pr.html_url ?? `https://github.com/${repositoryFullName}/pull/${pr.number}`;
+
+  const mappedChecks: GitHubCheckObservation[] = [
+    ...checkRuns.map((c) => ({
+      id: c.id,
+      name: c.name,
+      kind: "CHECK_RUN" as const,
+      status: c.status as GitHubCheckObservation["status"],
+      conclusion: (c.conclusion ?? undefined) as GitHubCheckObservation["conclusion"],
+      startedAt: c.started_at ?? pr.updated_at,
+      completedAt: c.completed_at ?? undefined,
+      htmlUrl: c.html_url ?? htmlUrl,
+    })),
+    ...commitStatuses.map((s) => statusToCheck(s, htmlUrl)),
+  ];
+
+  const author = pr.user?.login ?? "unknown";
 
   return {
     number: pr.number,
     title: pr.title,
     state: pr.state,
     draft: pr.draft ?? false,
+    // Never `pr.merged`: the list endpoint omits that field entirely, so trusting it reports
+    // every merged pull request as merely closed. `merged_at` is present in both payloads.
     merged: Boolean(pr.merged_at),
     createdAt: pr.created_at,
     updatedAt: pr.updated_at,
@@ -223,9 +357,10 @@ function toObservation(
     closedAt: pr.closed_at ?? undefined,
     headRef: pr.head.ref,
     baseRef: pr.base.ref,
-    author: pr.user?.login ?? "unknown",
-    authorIsBot: pr.user?.type === "Bot",
-    htmlUrl: pr.html_url ?? `https://github.com/${repositoryFullName}/pull/${pr.number}`,
+    author,
+    authorIsBot: isBotAuthor(author, pr.user?.type),
+    authorIsAgent: isAgentBranch(pr.head.ref),
+    htmlUrl,
     mergeableState: pr.mergeable_state,
     requestedReviewers: (pr.requested_reviewers ?? []).map((r) => r.login),
     reviews: mappedReviews,

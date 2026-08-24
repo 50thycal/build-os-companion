@@ -1,0 +1,46 @@
+{
+  "$comment": "GET /repos/50thycal/party-games/pulls?state=all — the LIST endpoint. Observed 2026-08-24. The list payload carries no `merged` field at all; `merged_at` is the only evidence a PR was merged. Every merged PR in party-games looks unmerged if `merged` is trusted.",
+  "payload": [
+    {
+      "number": 141,
+      "title": "WS-002: Subway route engineering and playtest UX",
+      "state": "closed",
+      "draft": false,
+      "created_at": "2026-08-24T00:30:54Z",
+      "updated_at": "2026-08-24T11:05:31Z",
+      "closed_at": "2026-08-24T01:41:39Z",
+      "merged_at": "2026-08-24T01:41:39Z",
+      "head": { "ref": "codex/ws-002-subway-route-engineering", "sha": "3b209c01f07a0a4e3dc694651dc1ae65cc4e4719" },
+      "base": { "ref": "main" },
+      "user": { "login": "50thycal", "id": 62454092 },
+      "html_url": "https://github.com/50thycal/party-games/pull/141"
+    },
+    {
+      "number": 142,
+      "title": "fix(subway): preserve undo across no-op schedule selections",
+      "state": "open",
+      "draft": false,
+      "created_at": "2026-08-24T11:05:02Z",
+      "updated_at": "2026-08-24T11:51:58Z",
+      "head": { "ref": "codex/ws-002-noop-undo-fix", "sha": "4efb47156d2e8889368d0e51fb9a9dcfb1e980d0" },
+      "base": { "ref": "main" },
+      "user": { "login": "50thycal", "id": 62454092 },
+      "html_url": "https://github.com/50thycal/party-games/pull/142"
+    },
+    {
+      "number": 134,
+      "title": "Add Subway game (engine, UI, rules) with validation and tests",
+      "state": "closed",
+      "draft": false,
+      "created_at": "2026-08-19T15:59:55Z",
+      "updated_at": "2026-08-19T16:06:43Z",
+      "closed_at": "2026-08-19T16:06:22Z",
+      "merged_at": "2026-08-19T16:06:22Z",
+      "head": { "ref": "codex/implement-subway-game-prototype-in-party-games-64hpoz", "sha": "89e6d2c40ea6c545916579cdf644b5f26cd70ab5" },
+      "base": { "ref": "main" },
+      "user": { "login": "50thycal", "id": 62454092 },
+      "labels": [{ "name": "codex" }],
+      "html_url": "https://github.com/50thycal/party-games/pull/134"
+    }
+  ]
+}

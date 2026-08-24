@@ -157,12 +157,65 @@ export function headerField(markdown: string, field: string): string | undefined
   return value === "" ? undefined : value;
 }
 
-/** Bullet list items in a section body, with markers and bold wrappers removed. */
+const BULLET = /^\s*[-*+]\s+(.*)$/;
+const ORDERED = /^\s*\d+[.)]\s+/;
+const HEADING = /^\s*#{1,6}\s/;
+const TABLE_ROW = /^\s*\|/;
+
+/**
+ * Bullet list items in a section body, with markers and bold wrappers removed.
+ *
+ * An item runs until the next block starts, not until the end of the line. Real Build OS
+ * artifacts hard-wrap prose at ~100 columns, so a single decision or blocker routinely spans
+ * three or four physical lines:
+ *
+ * ```text
+ * - **D1. Shelving.** A company may leave a contract off the schedule entirely and eat its
+ *   incomplete penalty (-4 to -8 VP). Introduced because a company forced above the horizon
+ *   would otherwise have no legal schedule.
+ * ```
+ *
+ * Reading only the first line yields "…and eat its", which is not a truncation the owner can
+ * detect — it is a fragment that reads like a whole sentence. Since the attention engine quotes
+ * `openDecisions[0].question` verbatim into the sentence it shows the owner, a first-line-only
+ * parse puts a mangled question on the Needs Me screen. This is a lazy continuation in the
+ * CommonMark sense: the item ends at a blank line, a new list item, a heading, or a table.
+ */
 export function listItems(body: string): string[] {
-  return stripCodeFences(body)
-    .split("\n")
-    .map((line) => /^\s*[-*+]\s+(.*)$/.exec(line)?.[1]?.trim())
-    .filter((item): item is string => item !== undefined && item !== "");
+  const lines = stripCodeFences(body).split("\n");
+  const items: string[] = [];
+  let current: string[] | undefined;
+
+  const flush = () => {
+    if (current) {
+      const joined = current.join(" ").replace(/\s+/g, " ").trim();
+      if (joined !== "") items.push(joined);
+    }
+    current = undefined;
+  };
+
+  for (const line of lines) {
+    const bullet = BULLET.exec(line);
+    if (bullet) {
+      flush();
+      current = [bullet[1]!.trim()];
+      continue;
+    }
+    if (
+      current === undefined ||
+      line.trim() === "" ||
+      HEADING.test(line) ||
+      TABLE_ROW.test(line) ||
+      ORDERED.test(line)
+    ) {
+      flush();
+      continue;
+    }
+    current.push(line.trim());
+  }
+
+  flush();
+  return items;
 }
 
 export function extractPrNumbers(text: string): number[] {

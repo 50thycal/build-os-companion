@@ -95,7 +95,18 @@ export type WorkstreamStatus = (typeof WORKSTREAM_STATUSES)[number];
 export interface OpenDecision {
   /** `D1`, `D2`… where the workstream file numbers them; otherwise a positional key. */
   key: string;
+  /**
+   * The decision itself, in one or two sentences — short enough to put on the Needs Me screen
+   * verbatim without truncating mid-word.
+   */
   question: string;
+  /**
+   * The complete text of the entry when it says more than `question` does: rationale, options,
+   * and the implementer's recommendation. Absent when the entry was already a single sentence.
+   * Nothing the artifact said is discarded; the split is about where it can be read, not what
+   * is kept.
+   */
+  detail?: string;
 }
 
 export interface WorkstreamState {
