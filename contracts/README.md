@@ -33,10 +33,27 @@ Entries like that have a `readBy` rather than a `consumedBy`: there is no second
 `src/`, so there is nothing to keep byte-identical, and the offline check verifies the hash
 alone.
 
-**One entry is currently ahead of canonical `main`.** The vendored template is the v0.5 one from
-`build-os` PR #7, which is in review. Until that PR merges, `npm run contracts:check` reports
-drift on that file — and that drift is the pending upgrade, not a failure. When it merges, run
-`contracts:sync` and the two agree again.
+## Pinning an entry to a ref
+
+A protocol change is made canonical-first, which means there is a window where the canonical
+version of a contract exists on a branch rather than on `main`. An entry may pin its own ref for
+that window:
+
+```json
+{
+  "file": "WORKSTREAM.template.md",
+  "canonicalRef": "codex/ws-007-feedback-review-closure",
+  "$comment": "Return to main and re-sync once build-os#7 merges."
+}
+```
+
+The check still runs against a real canonical source, so it still catches a local edit or an
+upstream change — it is simply looking at the ref where that version actually lives. It is not a
+way to exempt a file: an entry with no `canonicalRef` uses the manifest's, and both `check` and
+`sync` print the pinned ref every run so the window cannot be forgotten quietly.
+
+**`WORKSTREAM.template.md` is pinned right now**, to the branch of `build-os` PR #7. When that
+merges, remove the pin, run `contracts:sync`, and bump `buildOsVersion` to 0.5.
 
 ## Updating a vendored contract
 
