@@ -5,9 +5,6 @@
      This PR body is the authoritative handoff. Every section is required; sections with
      nothing to report say `None`. Keep it current if the PR changes. -->
 
-<!-- This PR body is the authoritative handoff. Every section is required; sections with
-     nothing to report say `None`. Keep it current if the PR changes. -->
-
 **Workstream:** WS-### · **Build Card:** <link> · **Build Spec:** <link> · **Build OS v0.4**
 
 ## Goal
