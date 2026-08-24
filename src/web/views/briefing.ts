@@ -120,7 +120,7 @@ export function briefingView(pack: FactPack, now: Date): string {
         left open for an hour must not consume attention that appeared while it sat there.
       -->
       <input type="hidden" name="checkpointAt" value="${since.generatedAt}">
-      <button class="btn" type="submit" ${since.toSequence === since.fromSequence ? "disabled" : ""}>
+      <button class="btn" type="submit" ${since.acknowledgeable ? "" : "disabled"}>
         ${since.isFirstLook ? "Start tracking from here" : "Mark as read"}
       </button>
     </form>

@@ -80,6 +80,21 @@ export interface SinceLastChecked {
   eventCount: number;
   /** True when nothing at all happened. */
   quiet: boolean;
+  /**
+   * Whether this briefing contains anything the owner could accept as read.
+   *
+   * Not the same question as "did the event sequence advance", and the difference is the whole
+   * reason the cursor has two dimensions. Attention opens and resolves without events — a pull
+   * request goes stale when a threshold passes while nothing happens — so a briefing can carry
+   * real news at an unchanged `toSequence`. Gating the acknowledgement control on the sequence
+   * alone leaves those items with no way to be acknowledged through the product at all, and
+   * they reappear forever.
+   *
+   * Resolved attention is checked separately from `quiet` rather than folded into it: a
+   * resolution only becomes a group when its entity also had events, so an item that quietly
+   * stopped being true produces no group either.
+   */
+  acknowledgeable: boolean;
 }
 
 const FINISHED: ReadonlySet<EventType> = new Set([
@@ -283,5 +298,11 @@ export function buildSinceLastChecked(input: SinceInput): SinceLastChecked {
     resolvedAttention,
     eventCount: events.length,
     quiet: groups.length === 0,
+    acknowledgeable:
+      // A first look has no cursor yet, so accepting it establishes the baseline.
+      cursor === undefined ||
+      groups.length > 0 ||
+      newAttention.length > 0 ||
+      resolvedAttention.length > 0,
   };
 }

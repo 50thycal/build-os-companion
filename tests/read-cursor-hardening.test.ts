@@ -161,3 +161,157 @@ describe("a sequence beyond the ledger cannot suppress future events", () => {
     expect(h.app.since().newAttention.some((a) => a.reasonCode === "PR_STALE")).toBe(true);
   });
 });
+
+/**
+ * End-to-end through the web path.
+ *
+ * The tests above call `markChecked` directly, which is why they all passed while the product
+ * was still wrong: the storage layer was correct and the button that reaches it was disabled.
+ * These drive `/briefing` and the real form POST, parsing the control and its hidden fields out
+ * of the rendered HTML, so a briefing that cannot be acknowledged in the browser fails here.
+ */
+describe("acknowledging a briefing through the browser", () => {
+  const OWNER_LOGIN = "50thycal";
+
+  /** The mark-as-read control as actually rendered: its fields, and whether it is usable. */
+  function readForm(html: string): { sequence: string; checkpointAt: string; enabled: boolean } {
+    const form = /<form method="post" action="\/briefing\/checked"[\s\S]*?<\/form>/.exec(html)?.[0];
+    if (!form) throw new Error("no mark-as-read form rendered");
+    return {
+      sequence: /name="sequence" value="([^"]*)"/.exec(form)?.[1] ?? "",
+      checkpointAt: /name="checkpointAt" value="([^"]*)"/.exec(form)?.[1] ?? "",
+      enabled: !/<button[^>]*\sdisabled/.test(form),
+    };
+  }
+
+  async function serving<T>(app: CompanionApp, work: (base: string) => Promise<T>): Promise<T> {
+    const { createCompanionServer } = await import("../src/web/server.ts");
+    const server = createCompanionServer({ app });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as { port: number }).port;
+    try {
+      return await work(`http://127.0.0.1:${port}`);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  }
+
+  it("lets the owner acknowledge attention that arrived without an event", async () => {
+    const clock = { now: new Date("2026-08-24T10:00:00Z") };
+    const h = harness(clock);
+    await sync(h, clock.now);
+
+    await serving(h.app, async (base) => {
+      // The owner reads and marks the first briefing, through the form.
+      const first = readForm(await (await fetch(`${base}/briefing`)).text());
+      expect(first.enabled).toBe(true);
+      await fetch(`${base}/briefing/checked`, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ sequence: first.sequence, checkpointAt: first.checkpointAt }),
+        redirect: "manual",
+      });
+
+      const marked = h.app.readCursor()!;
+      expect(marked.lastSeq).toBe(h.ledger.latestSequence());
+
+      // Time passes and a pull request goes stale. Attention opens; no event is appended.
+      clock.now = new Date("2026-08-29T10:05:00Z");
+      await sync(h, clock.now);
+
+      const staleItem = h.store.openAttention().find((a) => a.reasonCode === "PR_STALE");
+      expect(staleItem, "the scenario needs a no-event attention item").toBeDefined();
+      expect(h.ledger.latestSequence()).toBe(marked.lastSeq);
+
+      // The briefing shows it, at an unchanged event sequence.
+      const page = await (await fetch(`${base}/briefing`)).text();
+      const since = h.app.since();
+      expect(since.toSequence).toBe(since.fromSequence);
+      expect(since.newAttention.map((a) => a.id)).toContain(staleItem!.id);
+      expect(page).toContain(staleItem!.reasonText.slice(0, 40));
+
+      // The regression: the only control that can acknowledge it must not be disabled.
+      const second = readForm(page);
+      expect(second.enabled).toBe(true);
+      expect(second.sequence).toBe(String(since.toSequence));
+
+      // Posting it advances the timestamp dimension and leaves the sequence alone.
+      await fetch(`${base}/briefing/checked`, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ sequence: second.sequence, checkpointAt: second.checkpointAt }),
+        redirect: "manual",
+      });
+
+      const after = h.app.readCursor()!;
+      expect(after.lastSeq).toBe(marked.lastSeq);
+      expect(after.lastCheckedAt > marked.lastCheckedAt).toBe(true);
+
+      // And it is not reported as new again.
+      expect(h.app.since().newAttention.map((a) => a.id)).not.toContain(staleItem!.id);
+    });
+  });
+
+  it("disables the control only when there is genuinely nothing to acknowledge", async () => {
+    const clock = { now: new Date("2026-08-24T10:00:00Z") };
+    const h = harness(clock);
+    await sync(h, clock.now);
+
+    await serving(h.app, async (base) => {
+      const first = readForm(await (await fetch(`${base}/briefing`)).text());
+      await fetch(`${base}/briefing/checked`, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ sequence: first.sequence, checkpointAt: first.checkpointAt }),
+        redirect: "manual",
+      });
+
+      // Nothing has happened since; the briefing is genuinely empty.
+      clock.now = new Date("2026-08-24T10:30:00Z");
+      const since = h.app.since();
+      expect(since.quiet).toBe(true);
+      expect(since.newAttention).toHaveLength(0);
+      expect(since.resolvedAttention).toHaveLength(0);
+
+      expect(readForm(await (await fetch(`${base}/briefing`)).text()).enabled).toBe(false);
+    });
+  });
+
+  it("lets the owner acknowledge a resolution that arrived without an event", async () => {
+    const clock = { now: new Date("2026-08-24T10:00:00Z") };
+    const h = harness(clock);
+    await sync(h, clock.now);
+    const briefing = h.app.since();
+    h.app.markChecked(briefing.toSequence, briefing.generatedAt);
+
+    // The owner answers WS-001's decisions in the repository. The workstream file changes but
+    // emits no event, so the resolution exists only on the timestamp dimension.
+    const port = livePartyGamesPort();
+    clock.now = new Date("2026-08-24T11:00:00Z");
+    await durableSync({
+      store: h.store,
+      ledger: h.ledger,
+      github: {
+        ...port,
+        readFile: async (repo: string, path: string) => {
+          const file = await port.readFile(repo, path);
+          if (!file || !path.includes("WS-001")) return file;
+          return { ...file, content: file.content.replace(/^## Open Decisions[\s\S]*$/m, "## Open Decisions\n\nNone.\n") };
+        },
+      },
+      project: h.store.getProject(PARTY_GAMES.id)!,
+      ownerLogin: OWNER_LOGIN,
+      now: clock.now,
+    });
+
+    const since = h.app.since();
+    expect(since.resolvedAttention.length).toBeGreaterThan(0);
+    // A resolution only becomes a group when its entity also had events, so this one does not.
+    expect(since.quiet).toBe(true);
+    expect(since.acknowledgeable).toBe(true);
+
+    await serving(h.app, async (base) => {
+      expect(readForm(await (await fetch(`${base}/briefing`)).text()).enabled).toBe(true);
+    });
+  });
+});
