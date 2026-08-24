@@ -19,3 +19,8 @@ export * from "./ingest/buildos/detect.ts";
 
 export * from "./ingest/checkpoint/validate.ts";
 export * from "./ingest/checkpoint/normalize.ts";
+export * from "./store/database.ts";
+export * from "./store/store.ts";
+export * from "./ledger/sqlite-ledger.ts";
+export * from "./config/followed.ts";
+export * from "./sync/durable-sync.ts";

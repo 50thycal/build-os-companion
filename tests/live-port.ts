@@ -69,10 +69,12 @@ export function livePartyGamesPort(options: LivePortOptions = {}): GitHubPort {
   return {
     async observe(_repo: string, opts: ObserveOptions = {}): Promise<GitHubObservation> {
       if (options.failWith) throw options.failWith;
+      // Transform first, then filter. GitHub filters on the pull request's real `updated_at`,
+      // so a test that changes a PR must have that change decide whether the cursor sees it.
       const pullRequests = listPayload
         .map(toObservation)
-        .filter((pr) => !opts.updatedSince || pr.updatedAt > opts.updatedSince)
-        .map((pr) => (options.transform ? options.transform(pr) : pr));
+        .map((pr) => (options.transform ? options.transform(pr) : pr))
+        .filter((pr) => !opts.updatedSince || pr.updatedAt > opts.updatedSince);
 
       return {
         repositoryFullName: "50thycal/party-games",
@@ -100,7 +102,8 @@ export function livePartyGamesPort(options: LivePortOptions = {}): GitHubPort {
 }
 
 export const PARTY_GAMES = {
-  id: "party-games",
+  // Ids are derived from the repository name (`projectIdFor`), and the two are one-to-one.
+  id: "50thycal-party-games",
   ownerUserId: "50thycal",
   repositoryFullName: "50thycal/party-games",
   defaultBranch: "main",
