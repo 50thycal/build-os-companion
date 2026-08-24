@@ -71,7 +71,7 @@ the written fact pack proves accurate in real use.
 
 Shipped in [#1](https://github.com/50thycal/build-os-companion/pull/1): extraction with history,
 seven live-data fixes, durable SQLite persistence, followed-project configuration, the four-screen
-web application, the read cursor, and the fact pack. 236 tests.
+web application, the read cursor, and the fact pack. 239 tests.
 
 ## Review State
 
@@ -86,6 +86,13 @@ Reviewed once, independently, on PR #1. Three corrections, all applied:
   has had, and it was its own.
 - The mobile checker cited Apple's 44pt guideline while failing only below 32px. It now enforces
   44, and the chips and disclosure toggles were raised to match.
+
+Re-reviewed at `d712133`; the three above were accepted and a fourth found. The briefing's
+acknowledgement control was gated on the event sequence alone, so a briefing carrying attention
+that opened or resolved without an event could not be acknowledged through the product at all,
+and the item reappeared forever. Fixed by moving the rule into `SinceLastChecked.acknowledgeable`
+and covering it with end-to-end web cases that drive the real form POST — the previous cursor
+tests called `markChecked` directly, which is why they passed while the button was disabled.
 
 Still not reviewed in the way that matters: the application has never been used against real
 work, which is the only thing that can tell the owner whether the attention rules are calibrated

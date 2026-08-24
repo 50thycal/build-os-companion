@@ -12,7 +12,7 @@ briefing proves accurate in real use.
 
 ```bash
 npm install
-npm test                    # 236 tests, no network
+npm test                    # 239 tests, no network
 GITHUB_TOKEN=... npm start  # http://localhost:8787
 ```
 
@@ -107,7 +107,7 @@ read `HTTPS_PROXY` on its own.
 | Command | What it does |
 |---|---|
 | `npm start` | Sync, then serve the web app |
-| `npm test` | 236 tests, offline |
+| `npm test` | 239 tests, offline |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run sync` | One sync cycle from the CLI |
 | `npm run demo` | Print the feed for the bundled fixtures |
