@@ -116,10 +116,13 @@ export interface FactPack {
   since: SinceLastChecked;
 }
 
-let counter = 0;
+/**
+ * A fact's id, derived from where it sits and what it is about.
+ *
+ * Deterministic and position-independent: the same section and entity yield the same id however
+ * often the pack is built, so a renderer can address a fact without depending on build order.
+ */
 function factId(section: FactSectionKey, key: string): string {
-  // Deterministic within a pack: same section and entity, same id, however often it is built.
-  counter += 1;
   return `${section.toLowerCase()}:${key}`.replace(/[^a-z0-9:_-]+/gi, "-");
 }
 
@@ -154,7 +157,6 @@ export interface FactPackInput {
 
 export function buildFactPack(input: FactPackInput): FactPack {
   const { store, ledger, ownerUserId, now } = input;
-  counter = 0;
 
   const followed = store
     .listProjects()

@@ -141,6 +141,26 @@ named rather than glossed.
 
 ---
 
+## Deploying it
+
+One Node process and one SQLite file, so deployment is mostly a question about disk. **The
+database is the application state, not a cache** — lose it and the Companion does not degrade, it
+forgets, and the next sync presents all of history as new. So the host must give it a persistent
+filesystem, which rules out serverless platforms and rules in Fly, Railway, Render, a VPS, or a
+Pi in a cupboard.
+
+```bash
+docker build -t build-os-companion .
+docker run -d -p 8787:8787 -v companion-data:/data -e GITHUB_TOKEN=ghp_... build-os-companion
+```
+
+There is **no authentication**: this renders one person's private repository activity and assumes
+it is not on the open internet. Put it behind a VPN or a reverse proxy.
+[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) covers the volume, the cron sync, the token scope, and
+backing up a live database.
+
+---
+
 ## Layout
 
 ```text
