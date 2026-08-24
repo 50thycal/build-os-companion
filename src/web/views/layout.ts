@@ -51,6 +51,12 @@ header.top {
 }
 header.top h1 { margin: 0; font-size: 19px; letter-spacing: -0.01em; }
 header.top .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+header.top .bar { display: flex; align-items: baseline; gap: 12px; }
+header.top form.signout { margin-left: auto; }
+header.top form.signout button {
+  background: none; border: none; padding: 12px 0; margin: -12px 0;
+  min-height: 44px; color: var(--muted); font: inherit; font-size: 13px; cursor: pointer;
+}
 
 main { padding: 14px 16px 24px; max-width: 720px; margin: 0 auto; }
 
@@ -178,6 +184,8 @@ export interface LayoutOptions {
   tab: Tab;
   /** Shown on the Needs Me tab. Omitted when zero — a badge reading 0 is noise. */
   needsCount?: number;
+  /** Render the sign-out control. False when the app is running without a password. */
+  signOut?: boolean;
   body: string;
 }
 
@@ -205,7 +213,10 @@ export function layout(options: LayoutOptions): string {
 </head>
 <body>
 <header class="top">
-  <h1>${esc(options.title)}</h1>
+  <div class="bar">
+    <h1>${esc(options.title)}</h1>
+    ${options.signOut ? `<form class="signout" method="post" action="/logout"><button type="submit">Sign out</button></form>` : ""}
+  </div>
   ${options.subtitle ? `<div class="sub">${esc(options.subtitle)}</div>` : ""}
 </header>
 <main>${options.body}</main>

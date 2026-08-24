@@ -91,11 +91,14 @@ enough.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `GITHUB_TOKEN` | — | Repo-scoped token. Without it the app serves stored state and syncing is off. |
+| `COMPANION_PASSWORD` | — | **Required.** The app refuses to serve anything without it. Changing it signs out every device. |
+| `GITHUB_TOKEN` | — | Repo-scoped, read-only. Without it the app serves stored state and syncing is off. |
 | `COMPANION_DB` | `data/companion.db` | SQLite file. Back this up; it is the whole application state. |
 | `COMPANION_CONFIG` | `companion.config.json` | Config path. |
-| `PORT` / `HOST` | `8787` / `0.0.0.0` | Listen address. |
+| `PORT` / `HOST` | `8787` / `0.0.0.0` | Listen address. Railway assigns `PORT` — don't set it there. |
+| `COMPANION_SYNC_INTERVAL_MINUTES` | `20` when a token is set | Background refresh. `0` disables it. |
 | `COMPANION_SYNC_ON_START` | `1` | Set `0` to skip the sync at boot. |
+| `COMPANION_ALLOW_NO_AUTH` | — | Set `1` to run with no password. Local use only, never on a public hostname. |
 
 Behind an HTTP proxy, Node's `fetch` needs `NODE_USE_ENV_PROXY=1` (Node ≥ 22.21); it does not
 read `HTTPS_PROXY` on its own.
@@ -145,19 +148,25 @@ named rather than glossed.
 
 One Node process and one SQLite file, so deployment is mostly a question about disk. **The
 database is the application state, not a cache** — lose it and the Companion does not degrade, it
-forgets, and the next sync presents all of history as new. So the host must give it a persistent
-filesystem, which rules out serverless platforms and rules in Fly, Railway, Render, a VPS, or a
+forgets, and the next sync presents all of history as new. The host must give it a persistent
+filesystem, which rules out serverless platforms and rules in Railway, Fly, Render, a VPS, or a
 Pi in a cupboard.
 
+**Railway** is the documented path: deploy from the repo, add a volume at `/data`, set
+`COMPANION_PASSWORD` and `GITHUB_TOKEN`, generate a domain.
+
 ```bash
+# or anywhere that runs a container with a disk
 docker build -t build-os-companion .
-docker run -d -p 8787:8787 -v companion-data:/data -e GITHUB_TOKEN=ghp_... build-os-companion
+docker run -d -p 8787:8787 -v companion-data:/data \
+  -e COMPANION_PASSWORD=... -e GITHUB_TOKEN=... build-os-companion
 ```
 
-There is **no authentication**: this renders one person's private repository activity and assumes
-it is not on the open internet. Put it behind a VPN or a reverse proxy.
-[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) covers the volume, the cron sync, the token scope, and
-backing up a live database.
+Access is a **single password** and a signed, 30-day session cookie — sign in once per device.
+With no password set the app **refuses to serve anything**, because the alternative failure is a
+public URL quietly exposing private project state while looking healthy.
+[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) covers the volume, background syncing, token scope,
+and backing up a live database.
 
 ---
 

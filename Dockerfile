@@ -25,7 +25,9 @@ ENV NODE_ENV=production \
 VOLUME ["/data"]
 EXPOSE 8787
 
+# Reads $PORT rather than hardcoding it: Railway and similar hosts assign the port at runtime,
+# and a probe pinned to 8787 reports a perfectly healthy container as failing.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s \
-  CMD node -e "fetch('http://127.0.0.1:8787/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||8787)+'/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 CMD ["node", "--experimental-strip-types", "src/cli/serve.ts"]
