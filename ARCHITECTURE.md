@@ -9,17 +9,20 @@ GitHub          Build OS artifacts        agent checkpoints
    └────────────────────┴────────────────────────┘
                         │  normalizers
                         ▼
-             append-only event ledger          idempotent, provenanced
-                        │
-                        ▼
-                 state projection              PRs, workstreams, sessions, decisions
-                        │
-                        ▼
-                 attention engine              deterministic, reason-coded
+             append-only event ledger          idempotent, provenanced, durable
                         │
         ┌───────────────┼────────────────┐
         ▼               ▼                ▼
-      feed          briefing          podcast          (briefing and podcast: later)
+  state projection  artifact snapshots  attention lifecycle
+   PRs from events   latest reading of   one row per situation,
+                     canonical files     first-seen and cleared
+        └───────────────┼────────────────┘
+                        ▼
+                    CompanionApp                 the one read model
+                        │
+        ┌───────────────┼────────────────┬───────────────┐
+        ▼               ▼                ▼               ▼
+      feed          needs me          project        fact pack ──► podcast (later)
 ```
 
 Nothing downstream of the ledger touches a source system. That single rule is what stops the feed
@@ -141,3 +144,99 @@ a seam is honest.
 WS-002 needs persistence and a UI; WS-004 needs the checkpoint intake API; WS-005 needs
 `Since I last checked` and the written briefing. The layers above do not change to accommodate any
 of them — that is the point.
+
+---
+
+## Persistence — `src/store/`
+
+SQLite through `node:sqlite`: no dependency, no server, one file to back up. For a single-owner
+application that is the right amount of database, and because `node:sqlite` is synchronous the
+durable ledger implements the same `EventLedger` interface as the in-memory one — the
+projection, attention and feed layers are untouched by persistence existing.
+
+Four kinds of thing are stored, and keeping them apart is what makes "what changed since I last
+checked" answerable.
+
+**Events** are append-only, and ordered by an insertion sequence rather than by when they
+happened. That distinction is load-bearing. A pull request opened in January and first observed
+today is new to the owner even though its timestamp is eight months old; an `occurred_at` window
+misses it silently. The read cursor is therefore a sequence number, and `afterSequence` — not
+`since` — is what the briefing reads.
+
+**Artifact snapshots** are the latest reading of each project's canonical files. The ledger
+cannot stand in for them: workstream events are only emitted when the normalizer sees a change it
+watches, so a workstream that gains an open decision without changing phase produces no event at
+all, and the newest snapshot in the ledger would still show the old count. Storing the reading is
+what makes the Project screen correct after a restart with no sync.
+
+**Attention lifecycle** is one row per situation, carrying when it first appeared and when it
+stopped being true. Item ids are already deterministic — same situation, same id — which makes
+this a lifecycle rather than a replace: an item that persists keeps its original first-seen time,
+so "waiting on you since Tuesday" stays true, and one that stops being produced is marked
+resolved rather than deleted, because "resolved since you last checked" is something the owner
+needs told and a deleted row cannot tell them.
+
+Attention is compared against *when the owner last checked*, not against the event sequence. An
+item can open with no event behind it — a pull request goes stale because a threshold passed
+while nothing happened — and a `sequence >` comparison drops exactly those, the ones that arrived
+silently.
+
+**Cursors**: per-repository sync progress, and the owner's read position. Re-reading the config
+file never resets sync progress, and the read cursor never moves backwards.
+
+A failed poll never overwrites good state. The project is marked stale, the last picture that was
+true stays, and one project failing does not stop the others.
+
+---
+
+## The read model — `src/app/`
+
+Every screen goes through `CompanionApp`, and `CompanionApp` goes through the store and the
+ledger. This is the rule the design depends on: a screen never reaches past it to GitHub, so
+there is exactly one interpretation of what is true. `tests/web.test.ts` serves every page with
+a GitHub client that throws if anything touches it, which turns the rule from a convention into
+something that breaks the build.
+
+Attention is read from storage rather than recomputed per request. The engine produced those
+items at sync time and their lifecycle is what the briefing reads; recomputing here would let
+the Needs Me screen and the briefing drift apart within one page load.
+
+---
+
+## Briefing — `src/briefing/`
+
+Two layers over the same state.
+
+`since.ts` groups changes by what they mean — now needs you, stopped needing you, finished,
+broke, moved forward, happened without you — and collapses them per entity. One entity lands in
+exactly one section: a pull request whose CI failed and then merged is reported as finished, not
+in both places. This is not a chronological dump, because "what happened in what order" is a
+different question from "what did being away cost me".
+
+`fact-pack.ts` builds the six-section briefing structure over the same canonical state. Every
+fact carries `refs` back to the events and entities that produced it, and a test resolves every
+event reference against the ledger. That is the property the whole thing exists for: this
+structure is meant to be rendered into prose later, and the contract that renderer inherits is
+that it restates the supplied pack and nothing else — no querying the ledger, no calling GitHub,
+nothing asserted that no `FactRef` accounts for. A fact nobody can check is worse than no fact in
+a briefing meant to be acted on.
+
+The first renderer is deterministic, and is arguably the right permanent one.
+
+---
+
+## Web — `src/web/`
+
+Node's own `http`, server-rendered HTML, one stylesheet, no framework and no build step. It
+loads on one bar of signal, there is nothing to rebuild, and there is no second copy of the
+interpretation logic living in a browser.
+
+Built for a phone: navigation at the bottom in thumb reach, tap targets given a 44px hit box
+through padding with an equal negative margin so the touch area grows and the layout does not,
+and `safe-area-inset` respected top and bottom. `npm run check:mobile` loads every page at an
+iPhone viewport and fails on horizontal overflow or small tap targets.
+
+The read cursor moves on exactly one thing: a POST from the button on the briefing page.
+Rendering does not move it, syncing does not move it, and a malformed submission does not. Each
+of those has a test, because a cursor that advanced when a background process drew a screen would
+quietly consume the one piece of state the owner is relying on.
