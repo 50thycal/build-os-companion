@@ -2,7 +2,7 @@
   "$comment": "Vendored Build OS protocol contracts. See contracts/README.md.",
   "canonicalRepository": "50thycal/build-os",
   "canonicalRef": "main",
-  "buildOsVersion": "0.4",
+  "buildOsVersion": "0.5",
   "vendoredAt": "2026-08-24",
   "contracts": [
     {
@@ -12,12 +12,10 @@
       "consumedBy": "src/ingest/checkpoint/agent-session-checkpoint.v1.schema.json"
     },
     {
-      "$comment": "Pinned to the branch of build-os PR #7, where the v0.5 template lives while that PR is in review. Return canonicalRef to main and re-run contracts:sync once it merges.",
       "file": "WORKSTREAM.template.md",
       "canonicalPath": "templates/WORKSTREAM.template.md",
       "sha256": "36edf386cb7f17fd9861d8c7910a994ffef6b61f698c44c06af11716a3804a78",
-      "readBy": "tests/review-state-parse.test.ts",
-      "canonicalRef": "codex/ws-007-feedback-review-closure"
+      "readBy": "tests/review-state-parse.test.ts"
     }
   ]
 }

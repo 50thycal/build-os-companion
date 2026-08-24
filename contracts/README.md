@@ -52,8 +52,9 @@ upstream change — it is simply looking at the ref where that version actually 
 way to exempt a file: an entry with no `canonicalRef` uses the manifest's, and both `check` and
 `sync` print the pinned ref every run so the window cannot be forgotten quietly.
 
-**`WORKSTREAM.template.md` is pinned right now**, to the branch of `build-os` PR #7. When that
-merges, remove the pin, run `contracts:sync`, and bump `buildOsVersion` to 0.5.
+No entry is pinned right now. `WORKSTREAM.template.md` was, to the branch of `build-os` PR #7
+while v0.5 was in review; that PR merged on 2026-08-24 and the pin came off — the vendored copy
+was already byte-identical to what landed on `main`.
 
 ## Updating a vendored contract
 
