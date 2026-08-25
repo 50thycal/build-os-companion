@@ -1,8 +1,19 @@
 # The Companion is a single Node process with a SQLite file beside it.
 #
-# The database is the whole application state, so the one thing this image gets wrong if you
-# ignore it is the volume: without a persistent mount at /data, every restart is a first sync,
-# the read cursor is lost, and "what changed since I last checked" resets to "everything".
+# The database is the whole application state, so the one thing to get right when running this
+# image is the mount at /data: without a persistent one, every restart is a first sync, the read
+# cursor is lost, and "what changed since I last checked" resets to "everything".
+#
+# The mount is declared by the platform, never here:
+#
+#   Railway   Service -> Data -> add a volume with mount path /data
+#   Docker    docker run -v companion-data:/data ...
+#
+# There is deliberately no `VOLUME` instruction. Railway rejects a Dockerfile containing one
+# outright ("docker VOLUME is not supported, use Railway Volumes"), and it buys nothing here:
+# `VOLUME` only declares an *anonymous* volume as the default, which for this application is
+# actively worse -- a fresh unnamed volume per container that nobody knows to preserve or back
+# up. The explicit `-v` flag is what creates a mount worth keeping.
 
 FROM node:22-slim
 
@@ -21,8 +32,6 @@ ENV NODE_ENV=production \
     PORT=8787 \
     HOST=0.0.0.0
 
-# State lives here. Mount it.
-VOLUME ["/data"]
 EXPOSE 8787
 
 # Reads $PORT rather than hardcoding it: Railway and similar hosts assign the port at runtime,
