@@ -33,6 +33,7 @@ interface ProjectRow {
   default_branch: string;
   build_os_detected: number;
   build_os_version: string | null;
+  build_os_adopted_at: string | null;
   paths_json: string;
   enabled: number;
   created_at: string;
@@ -56,6 +57,7 @@ function toProject(row: ProjectRow): StoredProject {
     defaultBranch: row.default_branch,
     buildOsDetected: row.build_os_detected === 1,
     buildOsVersion: row.build_os_version ?? undefined,
+    buildOsAdoptedAt: row.build_os_adopted_at ?? undefined,
     paths: JSON.parse(row.paths_json) as BuildOsPaths,
     enabled: row.enabled === 1,
     createdAt: row.created_at,
@@ -152,8 +154,9 @@ export class CompanionStore {
       .prepare(
         `INSERT INTO projects (
            id, repository_full_name, owner_user_id, display_name, default_branch,
-           build_os_detected, build_os_version, paths_json, enabled, created_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           build_os_detected, build_os_version, build_os_adopted_at, paths_json, enabled,
+           created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            repository_full_name = excluded.repository_full_name,
            owner_user_id        = excluded.owner_user_id,
@@ -161,6 +164,7 @@ export class CompanionStore {
            default_branch       = excluded.default_branch,
            build_os_detected    = excluded.build_os_detected,
            build_os_version     = excluded.build_os_version,
+           build_os_adopted_at  = excluded.build_os_adopted_at,
            paths_json           = excluded.paths_json,
            enabled              = excluded.enabled`,
       )
@@ -172,6 +176,7 @@ export class CompanionStore {
         project.defaultBranch,
         project.buildOsDetected ? 1 : 0,
         project.buildOsVersion ?? null,
+        project.buildOsAdoptedAt ?? null,
         JSON.stringify(project.paths),
         project.enabled ? 1 : 0,
         project.createdAt,

@@ -22,7 +22,7 @@ import { computeAttention } from "../attention/engine.ts";
 import { buildFeed, type FeedCard } from "../feed/cards.ts";
 import { GitHubApiError, type GitHubPort } from "../ingest/github/client.ts";
 import { normalizeGitHubObservation, normalizeSyncFailure } from "../ingest/github/normalize.ts";
-import { workstreamFilePaths } from "../ingest/buildos/detect.ts";
+import { detectBuildOs, workstreamFilePaths } from "../ingest/buildos/detect.ts";
 import { parseDecisions, toDecisionRecords } from "../ingest/buildos/parse.ts";
 import { reconcileBuildOsState, type WorkstreamFileInput } from "../ingest/buildos/reconcile.ts";
 import { normalizeDecisions, normalizeWorkstreams } from "../ingest/buildos/normalize.ts";
@@ -57,6 +57,14 @@ export interface SyncResult {
   warnings: IntegrityWarning[];
   /** Set when GitHub could not be reached. Previous state is retained, marked stale. */
   syncFailed?: string;
+  /**
+   * What this cycle detected about the project's Build OS adoption, when it read the artifacts.
+   *
+   * Returned rather than applied: `syncProject` does not own the project record. A caller that
+   * persists projects stores this so the pin and its adoption date survive a restart; the CLI,
+   * which detects for itself before calling, ignores it.
+   */
+  detected?: { version?: string; adoptedAt?: string };
 }
 
 async function loadBuildOsState(
@@ -66,6 +74,7 @@ async function loadBuildOsState(
   decisions: DecisionRecord[];
   warnings: IntegrityWarning[];
   conflicts: ProjectState["conflicts"];
+  detected: { version?: string; adoptedAt?: string };
 } | undefined> {
   const { project, github, now } = input;
   if (!project.buildOsDetected) return undefined;
@@ -74,6 +83,29 @@ async function loadBuildOsState(
   if (!board) return undefined;
 
   const dirPaths = await github.listPaths(project.repositoryFullName, project.paths.workstreamDir);
+
+  /**
+   * Detect on every cycle, not once at configuration time.
+   *
+   * The project pin and its adoption date are read out of the repository's own agent
+   * instructions, so a project that adopts v0.5 today must start being gated today — without
+   * anyone re-running the CLI. Only the CLI used to detect, which left the served path, and so
+   * the deployed path, holding no pin at all and the review gate inert on everything that did
+   * not declare a version in its own header.
+   */
+  const instructions = await github.readFile(project.repositoryFullName, "CLAUDE.md");
+  const detection = detectBuildOs({
+    paths: [...dirPaths, project.paths.activeWork],
+    agentInstructions: instructions?.content,
+    overrides: project.paths,
+  });
+  // Detection reads the repository; the stored value is a memory of an earlier read. Prefer what
+  // the artifacts say now, and fall back rather than forget when this cycle found nothing. The
+  // date belongs to the version it was recorded against, so the two move together or not at all
+  // — carrying an old adoption date onto a newly detected version would date the wrong boundary.
+  const buildOsVersion = detection.version ?? project.buildOsVersion;
+  const buildOsAdoptedAt = detection.version ? detection.adoptedAt : project.buildOsAdoptedAt;
+
   const files: WorkstreamFileInput[] = [];
 
   for (const path of workstreamFilePaths(project.paths, dirPaths)) {
@@ -90,8 +122,8 @@ async function loadBuildOsState(
     activeBoardHtmlUrl: board.htmlUrl,
     workstreamFiles: files,
     observedAt: now.toISOString(),
-    buildOsVersion: project.buildOsVersion,
-    buildOsAdoptedAt: project.buildOsAdoptedAt,
+    buildOsVersion,
+    buildOsAdoptedAt,
   });
 
   const decisionsFile = await github.readFile(project.repositoryFullName, project.paths.decisions);
@@ -109,6 +141,7 @@ async function loadBuildOsState(
     decisions,
     warnings: reconciled.warnings,
     conflicts: reconciled.conflicts,
+    detected: { version: buildOsVersion, adoptedAt: buildOsAdoptedAt },
   };
 }
 
@@ -117,6 +150,7 @@ export async function syncProject(input: SyncInput): Promise<SyncResult> {
   const thresholds = input.thresholds ?? DEFAULT_THRESHOLDS;
 
   let syncFailed: string | undefined;
+  let detected: SyncResult["detected"];
   const appended: CompanionEvent[] = [];
   let duplicates = 0;
 
@@ -163,6 +197,7 @@ export async function syncProject(input: SyncInput): Promise<SyncResult> {
       decisions = buildOs.decisions;
       warnings = buildOs.warnings;
       conflicts = buildOs.conflicts;
+      detected = buildOs.detected;
 
       const wsResult = ledger.append(
         normalizeWorkstreams(workstreams, {
@@ -197,7 +232,7 @@ export async function syncProject(input: SyncInput): Promise<SyncResult> {
     decisions,
     integrityWarnings: warnings,
     conflicts,
-    buildOsAdoptedAt: project.buildOsAdoptedAt,
+    buildOsAdoptedAt: detected?.adoptedAt ?? project.buildOsAdoptedAt,
   });
 
   const attention = computeAttention({
@@ -218,5 +253,5 @@ export async function syncProject(input: SyncInput): Promise<SyncResult> {
     since: input.since,
   });
 
-  return { appended, duplicates, state, attention, cards, warnings, syncFailed };
+  return { appended, duplicates, state, attention, cards, warnings, syncFailed, detected };
 }

@@ -105,6 +105,21 @@ export async function durableSync(input: DurableSyncInput): Promise<DurableSyncR
     decisions: pickFresh(result.state.decisions, previous.decisions),
   };
 
+  // Persist what detection read, so the pin and its adoption boundary survive a restart. Without
+  // this the served path would re-detect every cycle and still hold nothing between them, and a
+  // failed cycle — which never reaches here — would silently drop the boundary.
+  if (
+    result.detected &&
+    (result.detected.version !== project.buildOsVersion ||
+      result.detected.adoptedAt !== project.buildOsAdoptedAt)
+  ) {
+    store.upsertProject({
+      ...project,
+      buildOsVersion: result.detected.version,
+      buildOsAdoptedAt: result.detected.adoptedAt,
+    });
+  }
+
   store.putProjectState(state, at);
   store.recordSync(project.id, at);
   const { opened, resolved } = store.reconcileAttention(project.id, result.attention, at, sequence);
