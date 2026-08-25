@@ -40,6 +40,9 @@ const FULL_SHA = /^[0-9a-f]{40}$/i;
 
 const MARKER = /^\s*build os review verdict\s*:\s*(.+?)\s*$/i;
 const HEAD = /^\s*reviewed head\s*:\s*(.+?)\s*$/i;
+const ACTOR = /^\s*review actor\s*:\s*(.+?)\s*$/i;
+/** Declared by the implementing agent in the PR body, so self-review can be recognised. */
+const IMPLEMENTATION_ACTOR = /^\s*implementation actor\s*:\s*(.+?)\s*$/im;
 
 /**
  * Markdown puts emphasis on either side of the colon — `**Field:** value` and `**Field**: value`
@@ -54,6 +57,15 @@ export interface CommentVerdict {
   verdict: ReviewVerdict;
   /** Lowercased full SHA the verdict was given against. */
   reviewedHead: string;
+  /**
+   * Who issued the verdict, as distinct from the GitHub account that carried it.
+   *
+   * The whole premise of this form is a repository where those differ: an owner, an
+   * implementation agent and an independent reviewer can all post as the same login, and a
+   * record keyed on the login cannot answer who actually spoke. Absent when the comment did not
+   * declare one — in which case the verdict is evidence, never gate-clearing.
+   */
+  actor?: string;
 }
 
 /**
@@ -86,17 +98,49 @@ export function parseCommentVerdict(body: string): CommentVerdict | undefined {
   const verdict = normalizeVerdict(MARKER.exec(deemphasize(lines[markerIndex]!))![1]!);
   if (!verdict) return undefined;
 
-  // The head must follow its own marker, so two verdict blocks in one comment cannot cross-wire.
+  // Fields belong to their own marker, so two verdict blocks in one comment cannot cross-wire.
+  let head: string | undefined;
+  let actor: string | undefined;
+
   for (const raw of lines.slice(markerIndex + 1)) {
     const line = deemphasize(raw);
     if (MARKER.test(line)) break;
-    const match = HEAD.exec(line);
-    if (!match) continue;
-    const head = match[1]!.trim();
-    return FULL_SHA.test(head) ? { verdict, reviewedHead: head.toLowerCase() } : undefined;
+
+    const headMatch = HEAD.exec(line);
+    if (headMatch && head === undefined) {
+      const candidate = headMatch[1]!.trim();
+      // An abbreviated SHA is refused rather than ignored: the block claims a head and cannot
+      // prove which one, which is worse than claiming none.
+      if (!FULL_SHA.test(candidate)) return undefined;
+      head = candidate.toLowerCase();
+      continue;
+    }
+
+    const actorMatch = ACTOR.exec(line);
+    if (actorMatch && actor === undefined) {
+      const candidate = actorMatch[1]!.trim();
+      if (candidate !== "") actor = candidate;
+    }
   }
 
-  return undefined;
+  return head === undefined ? undefined : { verdict, reviewedHead: head, actor };
+}
+
+/**
+ * The actor a pull request's own handoff says implemented it.
+ *
+ * Read so that a verdict issued by that same actor is recognised as self-review. Nothing here
+ * verifies the claim — an implementing agent that declines to name itself simply leaves the
+ * comparison unavailable, which is why an undeclared implementation actor makes every comment
+ * verdict non-gate-clearing rather than trivially independent.
+ */
+export function implementationActor(body: string | undefined): string | undefined {
+  if (!body) return undefined;
+  const match = IMPLEMENTATION_ACTOR.exec(
+    withoutQuotes(stripCodeFences(stripHtmlComments(body))).replace(/[*`]/g, ""),
+  );
+  const actor = match?.[1]?.trim();
+  return actor === "" ? undefined : actor;
 }
 
 export interface CommentPosition extends CommentVerdict {
@@ -107,8 +151,9 @@ export interface CommentPosition extends CommentVerdict {
 /**
  * Every comment-borne verdict on a pull request, oldest first.
  *
- * Currency is decided downstream against reviews from the same author, because a reviewer who
- * approves in a review and later objects in a comment has one current position, not two.
+ * Currency is decided downstream, keyed on the **actor** rather than the GitHub login. Two
+ * reviewers relayed through one account are two reviewers; one reviewer who approves in a review
+ * and later objects in a comment is one position, and it is the later one.
  */
 export function commentVerdicts(comments: GitHubCommentObservation[] | undefined): CommentPosition[] {
   const positions: CommentPosition[] = [];

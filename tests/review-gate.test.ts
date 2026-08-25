@@ -169,13 +169,18 @@ describe("merge finalization — the head a commit cannot name", () => {
       author: "50thycal",
       authorIsBot: false,
       htmlUrl: "https://github.com/50thycal/cargo-ship/pull/84",
+      // The handoff names who implemented it, so the reviewer's actor can be compared against it.
+      // Both are relayed by the same login; only the declared actors tell them apart.
+      body: "# Implementation Handoff\n\nImplementation actor: claude-implementation-session\n",
       requestedReviewers: [],
       reviews: [],
       comments: [
         {
           id: 1,
           author: "50thycal",
-          body: `Build OS review verdict: Approved\nReviewed head: ${FINAL_HEAD}`,
+          body:
+            `Build OS review verdict: Approved\nReviewed head: ${FINAL_HEAD}\n` +
+            "Review actor: chatgpt-independent-session",
           createdAt: "2026-08-23T17:30:00Z",
           htmlUrl: "https://github.com/50thycal/cargo-ship/pull/84#issuecomment-1",
         },

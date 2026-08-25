@@ -15,7 +15,7 @@ import type {
 } from "../../domain/state.ts";
 import type { SourceRef } from "../../domain/provenance.ts";
 import type { GitHubPullRequestObservation } from "./types.ts";
-import { commentVerdicts } from "./comment-verdict.ts";
+import { commentVerdicts, implementationActor } from "./comment-verdict.ts";
 import { isApprovingVerdict } from "../../domain/state.ts";
 
 export function deriveLifecycle(pr: GitHubPullRequestObservation): PullRequestLifecycle {
@@ -40,20 +40,51 @@ export function deriveLifecycle(pr: GitHubPullRequestObservation): PullRequestLi
  * two, and the historical union of every `APPROVED` review would silently keep the old one alive.
  */
 interface Position {
+  /** The GitHub account that carried the position. Transport, not identity. */
   author: string;
+  /**
+   * Who took the position, when the artifact says.
+   *
+   * A GitHub review's actor *is* its login — GitHub authenticated it. A comment verdict's is
+   * whatever the comment declared, because the login there is only the pipe it came down.
+   */
+  actor?: string;
   at: string;
   approving: boolean;
   changesRequested: boolean;
   /** The commit the position was taken against, when one is recorded. */
   head?: string;
+  /**
+   * Whether this position may open the merge gate.
+   *
+   * False for a comment verdict that named no actor, and for one whose actor is the same actor
+   * the PR says implemented it. Both are still positions — they displace an earlier one by the
+   * same actor, and an objection still closes the gate — they simply cannot be the evidence that
+   * a merge was independently approved.
+   */
+  gateClearing: boolean;
+}
+
+/**
+ * Positions are keyed on the actor where one is known, and only otherwise on the login.
+ *
+ * This is the single-account case the comment form exists for: an owner, an implementation agent
+ * and an independent reviewer can all post as one login. Keying on the login alone makes them
+ * one reviewer, so the last one to speak silently overwrites the others — an implementation
+ * agent's position could supersede an independent reviewer's for no reason but sharing a pipe.
+ */
+function positionKey(position: Position): string {
+  return position.actor ?? position.author;
 }
 
 function activePositions(pr: GitHubPullRequestObservation): Position[] {
   const latestByReviewer = new Map<string, Position>();
+  const implementedBy = implementationActor(pr.body);
 
   const consider = (position: Position): void => {
-    const existing = latestByReviewer.get(position.author);
-    if (!existing || position.at > existing.at) latestByReviewer.set(position.author, position);
+    const key = positionKey(position);
+    const existing = latestByReviewer.get(key);
+    if (!existing || position.at > existing.at) latestByReviewer.set(key, position);
   };
 
   for (const review of pr.reviews) {
@@ -66,6 +97,9 @@ function activePositions(pr: GitHubPullRequestObservation): Position[] {
       approving: review.state === "APPROVED",
       changesRequested: review.state === "CHANGES_REQUESTED",
       head: review.commitId,
+      // GitHub authenticated this one, and refuses it on a PR the account authored — so a review
+      // that exists at all is already someone other than the author.
+      gateClearing: true,
     });
   }
 
@@ -81,12 +115,27 @@ function activePositions(pr: GitHubPullRequestObservation): Position[] {
    * later objects in a comment has one current position, not two, and whichever came last is it.
    */
   for (const position of commentVerdicts(pr.comments)) {
+    /**
+     * Independence is established by the record or not at all.
+     *
+     * A comment verdict opens the gate only when it names an actor *and* the PR names the actor
+     * that implemented it *and* the two differ. Anything less is a verdict on the record whose
+     * independence is unknown, and unknown independence must not read as approved: this form
+     * exists because GitHub identity is transport here, so the tool has nothing else to go on.
+     */
+    const independent =
+      position.actor !== undefined &&
+      implementedBy !== undefined &&
+      position.actor.toLowerCase() !== implementedBy.toLowerCase();
+
     consider({
       author: position.author,
+      actor: position.actor,
       at: position.at,
       approving: isApprovingVerdict(position.verdict),
       changesRequested: position.verdict === "CHANGES_REQUIRED",
       head: position.reviewedHead,
+      gateClearing: independent,
     });
   }
 
@@ -103,7 +152,7 @@ function activePositions(pr: GitHubPullRequestObservation): Position[] {
 export function deriveApprovedHeadShas(pr: GitHubPullRequestObservation): string[] {
   const shas = new Set<string>();
   for (const position of activePositions(pr)) {
-    if (!position.approving) continue;
+    if (!position.approving || !position.gateClearing) continue;
     if (position.head) shas.add(position.head.toLowerCase());
   }
   return [...shas].sort();
@@ -116,9 +165,12 @@ export function deriveApprovedHeadShas(pr: GitHubPullRequestObservation): string
  * than a flag: while it is non-empty, the gate is closed no matter who else approved.
  */
 export function deriveChangesRequestedBy(pr: GitHubPullRequestObservation): string[] {
+  // Reported by actor where one is declared: two objections relayed through one account are two
+  // objections, and naming the login twice would hide that. An objection counts whether or not
+  // it could have cleared the gate — closing it is always the safe direction.
   return activePositions(pr)
     .filter((position) => position.changesRequested)
-    .map((position) => position.author)
+    .map((position) => position.actor ?? position.author)
     .sort();
 }
 

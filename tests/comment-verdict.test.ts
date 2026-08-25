@@ -12,7 +12,11 @@
 
 import { describe, expect, it } from "vitest";
 
-import { commentVerdicts, parseCommentVerdict } from "../src/ingest/github/comment-verdict.ts";
+import {
+  commentVerdicts,
+  implementationActor,
+  parseCommentVerdict,
+} from "../src/ingest/github/comment-verdict.ts";
 import { deriveApprovedHeadShas, deriveChangesRequestedBy } from "../src/ingest/github/derive.ts";
 import type {
   GitHubCommentObservation,
@@ -22,10 +26,20 @@ import type {
 const HEAD = "42ea13c260a8e8952f8dc044e4ac20a6dcfc60e5";
 const OTHER = "8de3b8c7c5eb709e4a1038cf35c398234559f9f3f".slice(0, 40);
 
+const REVIEWER = "chatgpt-independent-session";
+const IMPLEMENTER = "claude-implementation-session";
+
+/** A PR whose handoff names who implemented it, so self-review can be recognised. */
+const BODY = `# Implementation Handoff\n\nImplementation actor: ${IMPLEMENTER}\n`;
+
 const APPROVAL = `Looks right to me.
 
 Build OS review verdict: Approved
-Reviewed head: ${HEAD}`;
+Reviewed head: ${HEAD}
+Review actor: ${REVIEWER}`;
+
+/** The same approval with no actor named — a verdict on the record, but not gate-clearing. */
+const ANONYMOUS_APPROVAL = `Build OS review verdict: Approved\nReviewed head: ${HEAD}`;
 
 function comment(overrides: Partial<GitHubCommentObservation> = {}): GitHubCommentObservation {
   return {
@@ -52,6 +66,7 @@ function pr(overrides: Partial<GitHubPullRequestObservation> = {}): GitHubPullRe
     baseRef: "main",
     author: "50thycal",
     authorIsBot: false,
+    body: BODY,
     htmlUrl: "https://github.com/50thycal/build-os/pull/9",
     requestedReviewers: [],
     reviews: [],
@@ -62,7 +77,11 @@ function pr(overrides: Partial<GitHubPullRequestObservation> = {}): GitHubPullRe
 
 describe("what counts as a verdict", () => {
   it("reads an approving verdict and the head it names", () => {
-    expect(parseCommentVerdict(APPROVAL)).toEqual({ verdict: "APPROVED", reviewedHead: HEAD });
+    expect(parseCommentVerdict(APPROVAL)).toEqual({
+      verdict: "APPROVED",
+      reviewedHead: HEAD,
+      actor: REVIEWER,
+    });
   });
 
   it("reads changes required, and the protocol's other spellings", () => {
@@ -169,7 +188,9 @@ describe("a comment verdict is a position of the same standing as a review", () 
     expect(deriveChangesRequestedBy(observation)).toEqual(["rae"]);
   });
 
-  it("lets a later review replace the same author's earlier comment", () => {
+  it("lets a later review replace the same actor's earlier comment", () => {
+    // The comment names `rae` as its actor and a GitHub review's actor is its login, so these
+    // are one reviewer speaking twice through two transports — not two reviewers.
     const observation = pr({
       reviews: [
         {
@@ -181,7 +202,11 @@ describe("a comment verdict is a position of the same standing as a review", () 
           commitId: HEAD,
         },
       ],
-      comments: [comment()],
+      comments: [
+        comment({
+          body: `Build OS review verdict: Approved\nReviewed head: ${HEAD}\nReview actor: rae`,
+        }),
+      ],
     });
     expect(deriveApprovedHeadShas(observation)).toEqual([]);
     expect(deriveChangesRequestedBy(observation)).toEqual(["rae"]);
@@ -224,5 +249,120 @@ describe("a comment verdict is a position of the same standing as a review", () 
       "2026-08-25T08:00:00Z",
       "2026-08-25T14:00:00Z",
     ]);
+  });
+});
+
+describe("one GitHub account, several actors", () => {
+  /**
+   * The case this whole form exists for, and the one it got wrong first.
+   *
+   * In a single-account repository the owner, the implementation agent and the independent
+   * reviewer all post as the same login. Keyed on the login they are one reviewer, so whoever
+   * spoke last silently overwrites the others — an implementation agent's own position could
+   * supersede an independent reviewer's for no reason but sharing a pipe.
+   */
+  const verdict = (v: string, actor: string) =>
+    `Build OS review verdict: ${v}\nReviewed head: ${HEAD}\nReview actor: ${actor}`;
+
+  it("does not let one actor's later verdict overwrite another's", () => {
+    const observation = pr({
+      comments: [
+        comment({
+          id: 1,
+          author: "50thycal",
+          createdAt: "2026-08-25T10:00:00Z",
+          body: verdict("Changes required", REVIEWER),
+        }),
+        comment({
+          id: 2,
+          author: "50thycal",
+          createdAt: "2026-08-25T11:00:00Z",
+          body: verdict("Approved", "owner-calvin"),
+        }),
+      ],
+    });
+
+    // Same login, two actors, two live positions. The objection survives the later approval.
+    expect(deriveChangesRequestedBy(observation)).toEqual([REVIEWER]);
+    expect(deriveApprovedHeadShas(observation)).toEqual([HEAD]);
+  });
+
+  it("still collapses one actor speaking twice", () => {
+    const observation = pr({
+      comments: [
+        comment({ id: 1, createdAt: "2026-08-25T10:00:00Z", body: verdict("Changes required", REVIEWER) }),
+        comment({ id: 2, createdAt: "2026-08-25T11:00:00Z", body: verdict("Approved", REVIEWER) }),
+      ],
+    });
+    expect(deriveChangesRequestedBy(observation)).toEqual([]);
+    expect(deriveApprovedHeadShas(observation)).toEqual([HEAD]);
+  });
+
+  it("reports objections by actor, so two through one account are two", () => {
+    const observation = pr({
+      comments: [
+        comment({ id: 1, author: "50thycal", body: verdict("Changes required", REVIEWER) }),
+        comment({ id: 2, author: "50thycal", body: verdict("Changes required", "owner-calvin") }),
+      ],
+    });
+    expect(deriveChangesRequestedBy(observation)).toEqual(["owner-calvin", REVIEWER].sort());
+  });
+});
+
+describe("independence is established by the record or not at all", () => {
+  it("does not clear the gate on a verdict that names no actor", () => {
+    // Still a verdict on the record — it displaces an earlier position by the same login and an
+    // objection would still close the gate. It just cannot be the evidence of independent review.
+    const observation = pr({ comments: [comment({ body: ANONYMOUS_APPROVAL })] });
+    expect(parseCommentVerdict(ANONYMOUS_APPROVAL)?.verdict).toBe("APPROVED");
+    expect(deriveApprovedHeadShas(observation)).toEqual([]);
+  });
+
+  it("does not clear the gate when the reviewer is the actor that implemented it", () => {
+    const observation = pr({
+      comments: [
+        comment({
+          body: `Build OS review verdict: Approved\nReviewed head: ${HEAD}\nReview actor: ${IMPLEMENTER}`,
+        }),
+      ],
+    });
+    expect(deriveApprovedHeadShas(observation)).toEqual([]);
+  });
+
+  it("ignores case when comparing the two actors", () => {
+    const observation = pr({
+      comments: [
+        comment({
+          body: `Build OS review verdict: Approved\nReviewed head: ${HEAD}\nReview actor: ${IMPLEMENTER.toUpperCase()}`,
+        }),
+      ],
+    });
+    expect(deriveApprovedHeadShas(observation)).toEqual([]);
+  });
+
+  it("does not clear the gate when the PR never says who implemented it", () => {
+    // Unknown independence must not read as approved. An implementing agent that declines to
+    // name itself would otherwise make every verdict trivially independent.
+    const observation = pr({ body: "# Implementation Handoff\n\nNo actor named.\n", comments: [comment()] });
+    expect(deriveApprovedHeadShas(observation)).toEqual([]);
+  });
+
+  it("still closes the gate on an objection from an actor that could not open it", () => {
+    const observation = pr({
+      comments: [
+        comment({
+          body: `Build OS review verdict: Changes required\nReviewed head: ${HEAD}\nReview actor: ${IMPLEMENTER}`,
+        }),
+      ],
+    });
+    expect(deriveChangesRequestedBy(observation)).toEqual([IMPLEMENTER]);
+  });
+
+  it("reads the implementation actor out of the PR body, ignoring quotes and fences", () => {
+    expect(implementationActor(BODY)).toBe(IMPLEMENTER);
+    expect(implementationActor("**Implementation actor:** someone-else")).toBe("someone-else");
+    expect(implementationActor("> Implementation actor: quoted")).toBeUndefined();
+    expect(implementationActor("```\nImplementation actor: fenced\n```")).toBeUndefined();
+    expect(implementationActor(undefined)).toBeUndefined();
   });
 });
