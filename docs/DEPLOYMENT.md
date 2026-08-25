@@ -138,13 +138,30 @@ token is both the correct scope and the safest one.
 Use a **fine-grained** token with **Repository access: All repositories**, and these permissions,
 all read-only:
 
-| Permission | Reads |
-|---|---|
-| Metadata | the repository itself (mandatory) |
-| Contents | `ACTIVE.md`, workstream files, `DECISIONS.md` |
-| Pull requests | PR state, draft/ready, reviews, base and head |
-| Checks | check runs |
-| Commit statuses | the other half of CI — Vercel-style statuses |
+| Permission | Reads | Needed? |
+|---|---|---|
+| Metadata | the repository itself | **Required** — GitHub adds it for you |
+| Contents | `ACTIVE.md`, workstream files, `DECISIONS.md` | **Required** — this is the Build OS layer |
+| Pull requests | PR state, draft/ready, reviews, base and head | **Required** |
+| Commit statuses | one half of CI — Vercel-style statuses | Optional |
+| Checks | the other half — check runs, written by GitHub Actions | Optional, and not offered on every account |
+
+The first three are the application. The last two are CI, and both are optional.
+
+Anything beyond the default three is added through **+ Add permissions** at the top right of the
+permissions box. **`Checks` is not offered on every account.** If it is not in that list, grant
+`Commit statuses` and move on — there is no way to make the Companion require a permission your
+account will not issue, and it does not need one.
+
+Without either CI permission the Companion syncs normally and every pull request reports
+**"no checks reported"** — which is what it reports today regardless, since neither seeded
+repository runs any CI. A token's permissions can be edited later without re-minting it and
+without invalidating existing sessions, so this is reversible the moment a followed repository
+starts producing CI you want to see.
+
+A missing CI permission is survivable by design: the client logs one line naming the surface it
+could not read and carries on. Losing pull requests, workstreams and decisions because one CI
+endpoint returned 403 would be losing everything to protect nothing.
 
 **"All repositories" covers every repository you own now and every one you create later.** So
 adding a project is adding a line to `companion.config.json` and restarting — the token never
