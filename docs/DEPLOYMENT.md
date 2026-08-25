@@ -130,9 +130,47 @@ has not seen.
 
 ## The token
 
-A classic or fine-grained token with **read** access to the repositories in
-`companion.config.json`. Nothing here writes to GitHub — there are no autonomous actions, by
-design — so a read-only token is the correct scope and the safest one.
+Nothing here writes to GitHub — there are no autonomous actions, by design — so a **read-only**
+token is both the correct scope and the safest one.
+
+### Mint one token, not one per project
+
+Use a **fine-grained** token with **Repository access: All repositories**, and these permissions,
+all read-only:
+
+| Permission | Reads |
+|---|---|
+| Metadata | the repository itself (mandatory) |
+| Contents | `ACTIVE.md`, workstream files, `DECISIONS.md` |
+| Pull requests | PR state, draft/ready, reviews, base and head |
+| Checks | check runs |
+| Commit statuses | the other half of CI — Vercel-style statuses |
+
+**"All repositories" covers every repository you own now and every one you create later.** So
+adding a project is adding a line to `companion.config.json` and restarting — the token never
+changes. The permissions above are the ceiling regardless of how many projects you follow, and
+none of them can write.
+
+The alternatives are both worse:
+
+- **Fine-grained, "Only select repositories"** — tightest possible scope, but you have to edit the
+  token's repository list every time you follow something new. That is the friction this table
+  exists to avoid, and the gain is small: the permissions are already read-only either way.
+- **Classic token with `repo`** — also zero-maintenance, but `repo` grants **write**. A token that
+  can push to your repositories, held by an application that never pushes, is strictly worse than
+  one that cannot.
+
+### The one case that needs a second credential
+
+A fine-grained token belongs to exactly one **resource owner**. One issued by your personal
+account cannot read repositories owned by an organisation, however you scope it — the org has to
+enable fine-grained tokens and approve the request, and that produces a separate token.
+
+The application is already shaped for this: `CompanionApp` takes a client **factory** keyed by
+project (`(project) => GitHubPort`) rather than a single shared client, so per-project credentials
+need no architectural change. `src/cli/serve.ts` currently closes over one token because one is
+enough; wiring a per-project override is a small change to that file alone, and worth making the
+day you actually follow an org repository rather than before.
 
 Behind an HTTP proxy, Node's `fetch` needs `NODE_USE_ENV_PROXY=1` (Node ≥ 22.21). It does not
 read `HTTPS_PROXY` on its own, and the failure looks like a `401` rather than a connection error,
