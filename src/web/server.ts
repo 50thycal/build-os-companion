@@ -11,6 +11,18 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 
 import type { CompanionApp } from "../app/companion-app.ts";
+import {
+  LoginThrottle,
+  SESSION_COOKIE,
+  type AuthState,
+  clearedCookie,
+  constantTimeEquals,
+  issueSession,
+  parseCookies,
+  sessionCookie,
+  verifySession,
+} from "./auth.ts";
+import { loginPage, setupRequiredPage } from "./views/login.ts";
 import { layout } from "./views/layout.ts";
 import { feedView } from "./views/feed.ts";
 import { needsMeView, type NeedsMeItem } from "./views/needs-me.ts";
@@ -20,12 +32,22 @@ import { ago, esc, html } from "./html.ts";
 
 export interface ServerOptions {
   app: CompanionApp;
-  /** Sync before rendering when state is older than this. Zero disables it. */
-  autoSyncAfterMinutes?: number;
+  /**
+   * Who is allowed in. Omitted only by tests that are not exercising the gate; a real server
+   * always passes one, and an unconfigured one refuses to serve.
+   */
+  auth?: AuthState;
 }
 
-function send(res: ServerResponse, status: number, body: string, contentType = "text/html; charset=utf-8"): void {
+function send(
+  res: ServerResponse,
+  status: number,
+  body: string,
+  contentType = "text/html; charset=utf-8",
+  extraHeaders: Record<string, string> = {},
+): void {
   res.writeHead(status, {
+    ...extraHeaders,
     "Content-Type": contentType,
     "Cache-Control": "no-store",
     // The pages render data from followed repositories; nothing is loaded from anywhere else.
@@ -36,9 +58,29 @@ function send(res: ServerResponse, status: number, body: string, contentType = "
   res.end(body);
 }
 
-function redirect(res: ServerResponse, location: string): void {
-  res.writeHead(303, { Location: location, "Cache-Control": "no-store" });
+function redirect(res: ServerResponse, location: string, extraHeaders: Record<string, string> = {}): void {
+  res.writeHead(303, { ...extraHeaders, Location: location, "Cache-Control": "no-store" });
   res.end();
+}
+
+/**
+ * Whether the connection reached us over HTTPS.
+ *
+ * Railway and every comparable host terminate TLS at their edge and forward the original scheme,
+ * so the socket here is plain HTTP even though the browser used HTTPS. Reading the socket alone
+ * would drop the `Secure` flag on exactly the deployments that need it most.
+ */
+function isSecureRequest(req: IncomingMessage): boolean {
+  const forwarded = req.headers["x-forwarded-proto"];
+  const proto = Array.isArray(forwarded) ? forwarded[0] : forwarded;
+  if (proto) return proto.split(",")[0]!.trim() === "https";
+  return "encrypted" in req.socket;
+}
+
+/** Only same-origin paths are accepted as a post-login destination, never a full URL. */
+function safeNext(value: string | null | undefined): string | undefined {
+  if (!value || !value.startsWith("/") || value.startsWith("//")) return undefined;
+  return value;
 }
 
 async function readBody(req: IncomingMessage, limit = 64 * 1024): Promise<string> {
@@ -67,9 +109,11 @@ function freshness(app: CompanionApp): string {
 
 export function createCompanionServer(options: ServerOptions): Server {
   const { app } = options;
+  const auth: AuthState = options.auth ?? { mode: "DISABLED" };
+  const throttle = new LoginThrottle();
 
   return createServer((req, res) => {
-    handle(req, res, app).catch((error: unknown) => {
+    handle(req, res, app, auth, throttle).catch((error: unknown) => {
       // Never leak a stack trace to the page; the owner gets a readable failure and the console
       // gets the detail.
       console.error("[companion] request failed", error);
@@ -89,10 +133,85 @@ export function createCompanionServer(options: ServerOptions): Server {
   });
 }
 
-async function handle(req: IncomingMessage, res: ServerResponse, app: CompanionApp): Promise<void> {
+async function handle(
+  req: IncomingMessage,
+  res: ServerResponse,
+  app: CompanionApp,
+  auth: AuthState,
+  throttle: LoginThrottle,
+): Promise<void> {
   const url = new URL(req.url ?? "/", "http://localhost");
   const path = url.pathname.replace(/\/+$/, "") || "/";
   const now = app.now();
+  const secure = isSecureRequest(req);
+
+  // Liveness answers before the gate: a host's health probe has no session, and a probe that
+  // cannot pass would make a correctly-locked deployment look broken. It reports whether the
+  // app is *configured* so a misconfiguration is visible rather than merely unreachable.
+  if (path === "/healthz") {
+    send(
+      res,
+      200,
+      JSON.stringify({ ok: true, projects: app.projects().length, configured: auth.mode !== "UNCONFIGURED" }),
+      "application/json",
+    );
+    return;
+  }
+
+  // Fail closed. Without a password there is nothing standing between a public hostname and
+  // this owner's private project state, so no route serves anything.
+  if (auth.mode === "UNCONFIGURED") {
+    send(res, 503, setupRequiredPage());
+    return;
+  }
+
+  if (auth.mode === "REQUIRED") {
+    const signedIn = verifySession(auth.key, parseCookies(req.headers.cookie)[SESSION_COOKIE], now);
+
+    if (path === "/login") {
+      if (signedIn) {
+        redirect(res, "/");
+        return;
+      }
+      if (req.method === "POST") {
+        const body = new URLSearchParams(await readBody(req));
+        // Throttle per source address. One process, one owner: enough to make online guessing
+        // pointless without pretending to defend against a distributed attempt.
+        const source = req.socket.remoteAddress ?? "unknown";
+
+        if (throttle.blocked(source, now)) {
+          send(res, 429, loginPage({ error: "Too many attempts. Wait a few minutes and try again." }));
+          return;
+        }
+        if (!constantTimeEquals(body.get("password") ?? "", auth.password)) {
+          throttle.recordFailure(source, now);
+          send(res, 401, loginPage({ error: "That password is not right.", next: safeNext(body.get("next")) }));
+          return;
+        }
+
+        throttle.clear(source);
+        const session = issueSession(auth.key, now);
+        redirect(res, safeNext(body.get("next")) ?? "/", {
+          "Set-Cookie": sessionCookie(session.value, session.maxAgeSeconds, secure),
+        });
+        return;
+      }
+      send(res, 200, loginPage({ next: safeNext(url.searchParams.get("next")) }));
+      return;
+    }
+
+    if (path === "/logout") {
+      redirect(res, "/login", { "Set-Cookie": clearedCookie(secure) });
+      return;
+    }
+
+    if (!signedIn) {
+      // Send them back where they were headed once they are in.
+      const next = req.method === "GET" ? `?next=${encodeURIComponent(url.pathname + url.search)}` : "";
+      redirect(res, `/login${next}`);
+      return;
+    }
+  }
 
   if (req.method === "POST") {
     if (path === "/sync") {
@@ -125,6 +244,8 @@ async function handle(req: IncomingMessage, res: ServerResponse, app: CompanionA
   }
 
   const needsCount = app.needsMe().length;
+  // Only offered when there is a session to end. With no password there is nothing to sign out of.
+  const signOut = auth.mode === "REQUIRED";
 
   if (path === "/" || path === "/feed") {
     send(
@@ -135,6 +256,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, app: CompanionA
         subtitle: freshness(app),
         tab: "feed",
         needsCount,
+        signOut,
         body: feedView(app.feed({ limit: 60 }), now),
       }),
     );
@@ -159,6 +281,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, app: CompanionA
         subtitle: entries.length === 0 ? "nothing is waiting on you" : `${entries.length} waiting`,
         tab: "needs",
         needsCount,
+        signOut,
         body: needsMeView(entries, now, lastSynced as string | undefined),
       }),
     );
@@ -175,6 +298,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, app: CompanionA
         subtitle: freshness(app),
         tab: "projects",
         needsCount,
+        signOut,
         body: projectListView(app.projects(), now, counts),
       }),
     );
@@ -192,6 +316,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, app: CompanionA
           title: "Not found",
           tab: "projects",
           needsCount,
+          signOut,
           body: html`<div class="empty"><div class="big">No such project</div><p><a href="/projects">Back to projects</a></p></div>`,
         }),
       );
@@ -206,6 +331,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, app: CompanionA
         subtitle: `${view.project.repositoryFullName} · synced ${ago(view.project.lastSyncedAt, now)}`,
         tab: "projects",
         needsCount,
+        signOut,
         body: projectView(view, now),
       }),
     );
@@ -222,6 +348,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, app: CompanionA
         subtitle: pack.isFirstLook ? "first look" : `read up to ${ago(pack.since.cursor?.lastCheckedAt, now)}`,
         tab: "briefing",
         needsCount,
+        signOut,
         body: briefingView(pack, now),
       }),
     );
@@ -235,11 +362,6 @@ async function handle(req: IncomingMessage, res: ServerResponse, app: CompanionA
     return;
   }
 
-  if (path === "/healthz") {
-    send(res, 200, JSON.stringify({ ok: true, projects: app.projects().length }), "application/json");
-    return;
-  }
-
   send(
     res,
     404,
@@ -247,6 +369,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, app: CompanionA
       title: "Not found",
       tab: "feed",
       needsCount,
+      signOut,
       body: html`<div class="empty"><div class="big">Not found</div><p><a href="/">Back to the feed</a></p></div>`,
     }),
   );

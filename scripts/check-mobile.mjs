@@ -7,6 +7,10 @@
  * Kept out of `npm test` on purpose — it needs a browser, and the unit suite must run anywhere.
  *
  *   node scripts/check-mobile.mjs [baseUrl]
+ *
+ * Set COMPANION_PASSWORD when the target requires a login. Without it the checker would be
+ * redirected to the sign-in page and would measure *that* five times while reporting a pass —
+ * a green result for pages it never loaded.
  */
 
 let chromium, devices;
@@ -41,8 +45,31 @@ const browser = await chromium.launch({
 const context = await browser.newContext({ ...devices[DEVICE] });
 const page = await context.newPage();
 
+/** Fail rather than silently measuring the login page. */
+async function assertNotLogin(where) {
+  if (new URL(page.url()).pathname === "/login") {
+    console.error(
+      `Redirected to /login while loading ${where}.` +
+        (process.env.COMPANION_PASSWORD
+          ? " The password was rejected."
+          : " Set COMPANION_PASSWORD so the checker can sign in."),
+    );
+    await browser.close();
+    process.exit(2);
+  }
+}
+
+if (process.env.COMPANION_PASSWORD) {
+  await page.goto(`${base}/login`, { waitUntil: "domcontentloaded" });
+  if (new URL(page.url()).pathname === "/login") {
+    await page.fill("#password", process.env.COMPANION_PASSWORD);
+    await Promise.all([page.waitForLoadState("networkidle"), page.click("button[type=submit]")]);
+  }
+}
+
 // The project page id is discovered rather than assumed, so this works against any database.
 await page.goto(`${base}/projects`, { waitUntil: "domcontentloaded" });
+await assertNotLogin("/projects");
 const projectHref = await page.evaluate(() => document.querySelector('a[href^="/projects/"]')?.getAttribute("href"));
 if (projectHref) PAGES.push(["project", projectHref]);
 
@@ -50,6 +77,7 @@ const problems = [];
 
 for (const [name, path] of PAGES) {
   await page.goto(base + path, { waitUntil: "networkidle" });
+  await assertNotLogin(path);
 
   const report = await page.evaluate((minTap) => {
     const docWidth = document.documentElement.clientWidth;

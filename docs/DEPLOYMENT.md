@@ -15,8 +15,9 @@ options in and others out:
 
 | Host | Works | Why |
 |---|---|---|
+| **Railway** | ✅ | Volumes, a URL, and a Dockerfile build. The documented path below. |
 | Fly.io | ✅ | Volumes are first-class; one small machine is enough |
-| Railway / Render | ✅ | Persistent disks available on a paid instance |
+| Render | ✅ | Persistent disk on a paid instance |
 | A VPS, or a Raspberry Pi at home | ✅ | Simplest of all: `docker run` with a bind mount |
 | Vercel / Netlify / Lambda | ❌ | Serverless filesystems are ephemeral. Every cold start would be a first sync. |
 
@@ -24,6 +25,58 @@ Nothing about the design is hostile to serverless — the ledger interface is de
 swappable, and a Postgres-backed `EventLedger` would make it possible. But that is a real piece
 of work and not a config change, and for a single-owner tool the disk is cheaper than the
 migration.
+
+## Railway
+
+The shortest correct path, and the one `railway.json` is written for.
+
+**1. Create the service.** New Project → Deploy from GitHub repo → `50thycal/build-os-companion`.
+Railway reads `railway.json`, builds the `Dockerfile`, and health-checks `/healthz`.
+
+**2. Add a volume.** Service → **Data** → add a volume with mount path **`/data`**.
+
+> This is the step that matters. `COMPANION_DB` already points at `/data/companion.db`, so with
+> the volume attached the database survives redeploys and restarts. Without it the service comes
+> up looking perfectly healthy and silently forgets everything on every deploy — including your
+> read cursor, so "since I last checked" resets to "everything" each time.
+
+**3. Set variables.** Service → **Variables**:
+
+| Variable | Value | Why |
+|---|---|---|
+| `COMPANION_PASSWORD` | something long | **Required.** Without it the app refuses to serve anything. |
+| `GITHUB_TOKEN` | `github_pat_…` | Read-only, scoped to the repositories you follow. |
+| `COMPANION_SYNC_INTERVAL_MINUTES` | `20` *(default)* | Background refresh. `0` disables it. |
+
+Do **not** set `PORT` — Railway assigns it and the app reads it.
+
+**4. Get a URL.** Service → **Settings → Networking → Generate Domain**. Open it, sign in with
+the password, and add it to your phone's Home Screen.
+
+### Why the password is not optional here
+
+A Railway domain is public. Anyone with the URL reaches the app, and every screen is your private
+project state — open decisions, workstream contents, pull request titles. The password is the
+only thing between that URL and your repositories, which is why an unconfigured deployment
+returns `503` on every route instead of starting anyway.
+
+`/healthz` deliberately answers before the gate, so Railway's probe passes on a correctly-locked
+service. It reports `configured: false` when no password is set, so a misconfiguration shows up
+as a bad health payload rather than as a service that merely looks fine.
+
+Changing `COMPANION_PASSWORD` later signs out every device — which is what you want the day you
+suspect it leaked.
+
+### Syncing
+
+The app syncs at startup, on the **Sync now** button, and every
+`COMPANION_SYNC_INTERVAL_MINUTES` in-process. A separate Railway cron service would **not** work:
+a volume attaches to exactly one service, so a second container cannot open the same database.
+
+Background syncing never advances the read cursor, so it cannot consume a briefing you have not
+seen.
+
+---
 
 ## Docker
 
@@ -76,13 +129,21 @@ which is confusing enough to be worth knowing in advance.
 
 ## Exposure
 
-There is **no authentication**. This is a single-owner tool that renders one person's private
-repository activity, and it assumes it is not on the open internet. Put it behind a VPN
-(Tailscale is the least work), a reverse proxy with basic auth, or bind it to localhost and
-reach it through an SSH tunnel.
+The app authenticates with a **single password** (`COMPANION_PASSWORD`) and a signed, HttpOnly
+session cookie that lasts 30 days — long enough that you sign in once per device. There are no
+accounts; there is one owner, and the only question is whether the visitor is them.
 
-Do not put it on a public address and rely on the URL being unguessable. Everything on those
-screens is private project state.
+Without a password set, the app **refuses to serve anything** rather than starting up exposed.
+That default exists because the alternative failure is silent: a public URL quietly serving
+private project state, looking completely healthy.
+
+`SameSite=Lax` on the session cookie is what stops a form on another site making an
+authenticated request here, which is why there is no separate CSRF token. `Secure` is set
+whenever the request arrived over HTTPS, including via a proxy that terminated it.
+
+If you would rather not rely on a password at all, the alternatives still apply: put it behind a
+VPN (Tailscale is the least work), or in front of Cloudflare Access. Both compose with the
+password rather than replacing it.
 
 ## Backups
 
