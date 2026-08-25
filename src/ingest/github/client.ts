@@ -152,7 +152,7 @@ export class HttpGitHubClient implements GitHubPort {
   }
 
   /**
-   * Read one of the two CI surfaces, tolerating the token not being allowed to.
+   * Read an optional surface, tolerating the token not being allowed to.
    *
    * Both CI endpoints need a permission of their own — `Checks` for check runs, `Commit statuses`
    * for the older status API — and a fine-grained token can perfectly reasonably be issued
@@ -166,8 +166,20 @@ export class HttpGitHubClient implements GitHubPort {
    * reported" — a phrase that is true either way and never claims a green build. Anything else,
    * including 401 on a bad token and 5xx, still propagates: those are real failures and the
    * owner should see the repository marked stale rather than quietly missing CI.
+   *
+   * Pull request comments are read the same way and for the same reason — the verdicts the merge
+   * gate depends on live there, but losing every workstream because that one read was denied
+   * would be the same bad trade. Their `empty` is `undefined` rather than `[]`, because "not
+   * read" and "read, and there were none" are different claims downstream.
    */
-  async #readCiSurface<T>(path: string, surface: string, empty: T): Promise<T> {
+  async #readOptionalSurface<T>(
+    path: string,
+    surface: string,
+    empty: T,
+    /** What the owner loses while the permission is missing. Named per surface, because a
+        warning that describes the wrong consequence is worse than none. */
+    consequence = 'CI will show as "no checks reported" for this repository',
+  ): Promise<T> {
     try {
       return await this.#get<T>(path);
     } catch (error) {
@@ -177,9 +189,8 @@ export class HttpGitHubClient implements GitHubPort {
         if (!this.#warnedSurfaces.has(surface)) {
           this.#warnedSurfaces.add(surface);
           console.warn(
-            `[companion] cannot read ${surface} (HTTP ${error.statusCode}). CI will show as ` +
-              `"no checks reported" for this repository. Grant the token read access to ${surface} ` +
-              `if you want CI state.`,
+            `[companion] cannot read ${surface} (HTTP ${error.statusCode}). ${consequence}. ` +
+              `Grant the token read access to ${surface} to change that.`,
           );
         }
         return empty;
@@ -194,7 +205,7 @@ export class HttpGitHubClient implements GitHubPort {
    * A missing or empty combined status is a normal answer, not a failure.
    */
   async #commitStatuses(repositoryFullName: string, sha: string): Promise<RawCommitStatus[]> {
-    const combined = await this.#readCiSurface<RawCombinedStatus>(
+    const combined = await this.#readOptionalSurface<RawCombinedStatus>(
       `/repos/${repositoryFullName}/commits/${sha}/status`,
       "Commit statuses",
       { state: "pending", total_count: 0, statuses: [] },
@@ -239,17 +250,16 @@ export class HttpGitHubClient implements GitHubPort {
        * `undefined` rather than `[]` on failure, because those mean different things — "not
        * read" must not read downstream as "read, and there were none".
        */
-      let comments: RawComment[] | undefined;
-      try {
-        comments = await this.#get<RawComment[]>(
-          `/repos/${repositoryFullName}/issues/${summary.number}/comments`,
-        );
-      } catch {
-        comments = undefined;
-      }
+      const comments = await this.#readOptionalSurface<RawComment[] | undefined>(
+        `/repos/${repositoryFullName}/issues/${summary.number}/comments`,
+        "Issues",
+        undefined,
+        "review verdicts left as PR comments will not be read, so an approved PR may still " +
+          "report as unapproved",
+      );
 
       // Both halves of GitHub's CI surface. A repository may use either, both, or neither.
-      const checks = await this.#readCiSurface<{
+      const checks = await this.#readOptionalSurface<{
         check_runs: {
           id: number;
           name: string;
