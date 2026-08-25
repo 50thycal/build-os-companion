@@ -40,6 +40,17 @@ Railway reads `railway.json`, builds the `Dockerfile`, and health-checks `/healt
 > up looking perfectly healthy and silently forgets everything on every deploy — including your
 > read cursor, so "since I last checked" resets to "everything" each time.
 
+The mount is declared here, in Railway, and **not** in the Dockerfile. Railway refuses to build an
+image containing a `VOLUME` instruction at all:
+
+```text
+dockerfile invalid: docker VOLUME at Line 25 is not supported, use Railway Volumes
+```
+
+So the Dockerfile deliberately has none, and a test asserts it stays that way. Nothing is lost:
+`VOLUME` only ever declared an *anonymous* volume as the default, which is worse here than
+nothing — a fresh unnamed volume per container that nobody would think to preserve or back up.
+
 **3. Set variables.** Service → **Variables**:
 
 | Variable | Value | Why |
@@ -119,9 +130,64 @@ has not seen.
 
 ## The token
 
-A classic or fine-grained token with **read** access to the repositories in
-`companion.config.json`. Nothing here writes to GitHub — there are no autonomous actions, by
-design — so a read-only token is the correct scope and the safest one.
+Nothing here writes to GitHub — there are no autonomous actions, by design — so a **read-only**
+token is both the correct scope and the safest one.
+
+### Mint one token, not one per project
+
+Use a **fine-grained** token with **Repository access: All repositories**, and these permissions,
+all read-only:
+
+| Permission | Reads | Needed? |
+|---|---|---|
+| Metadata | the repository itself | **Required** — GitHub adds it for you |
+| Contents | `ACTIVE.md`, workstream files, `DECISIONS.md` | **Required** — this is the Build OS layer |
+| Pull requests | PR state, draft/ready, reviews, base and head | **Required** |
+| Commit statuses | one half of CI — Vercel-style statuses | Optional |
+| Checks | the other half — check runs, written by GitHub Actions | Optional, and not offered on every account |
+
+The first three are the application. The last two are CI, and both are optional.
+
+Anything beyond the default three is added through **+ Add permissions** at the top right of the
+permissions box. **`Checks` is not offered on every account.** If it is not in that list, grant
+`Commit statuses` and move on — there is no way to make the Companion require a permission your
+account will not issue, and it does not need one.
+
+Without either CI permission the Companion syncs normally and every pull request reports
+**"no checks reported"** — which is what it reports today regardless, since neither seeded
+repository runs any CI. A token's permissions can be edited later without re-minting it and
+without invalidating existing sessions, so this is reversible the moment a followed repository
+starts producing CI you want to see.
+
+A missing CI permission is survivable by design: the client logs one line naming the surface it
+could not read and carries on. Losing pull requests, workstreams and decisions because one CI
+endpoint returned 403 would be losing everything to protect nothing.
+
+**"All repositories" covers every repository you own now and every one you create later.** So
+adding a project is adding a line to `companion.config.json` and restarting — the token never
+changes. The permissions above are the ceiling regardless of how many projects you follow, and
+none of them can write.
+
+The alternatives are both worse:
+
+- **Fine-grained, "Only select repositories"** — tightest possible scope, but you have to edit the
+  token's repository list every time you follow something new. That is the friction this table
+  exists to avoid, and the gain is small: the permissions are already read-only either way.
+- **Classic token with `repo`** — also zero-maintenance, but `repo` grants **write**. A token that
+  can push to your repositories, held by an application that never pushes, is strictly worse than
+  one that cannot.
+
+### The one case that needs a second credential
+
+A fine-grained token belongs to exactly one **resource owner**. One issued by your personal
+account cannot read repositories owned by an organisation, however you scope it — the org has to
+enable fine-grained tokens and approve the request, and that produces a separate token.
+
+The application is already shaped for this: `CompanionApp` takes a client **factory** keyed by
+project (`(project) => GitHubPort`) rather than a single shared client, so per-project credentials
+need no architectural change. `src/cli/serve.ts` currently closes over one token because one is
+enough; wiring a per-project override is a small change to that file alone, and worth making the
+day you actually follow an org repository rather than before.
 
 Behind an HTTP proxy, Node's `fetch` needs `NODE_USE_ENV_PROXY=1` (Node ≥ 22.21). It does not
 read `HTTPS_PROXY` on its own, and the failure looks like a `401` rather than a connection error,

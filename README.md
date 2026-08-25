@@ -89,10 +89,14 @@ Where a repository keeps its Build OS artifacts is discovered, not assumed — t
 repositories genuinely differ. Per-entry `paths` overrides are available when discovery is not
 enough.
 
+**Adding a project is adding a line here and restarting.** No new token, no schema change, no
+code: a fine-grained token scoped to *All repositories* already covers anything you follow later.
+Dropping a line disables that project rather than deleting it, so its history survives a typo.
+
 | Variable | Default | Meaning |
 |---|---|---|
 | `COMPANION_PASSWORD` | — | **Required.** The app refuses to serve anything without it. Changing it signs out every device. |
-| `GITHUB_TOKEN` | — | Repo-scoped, read-only. Without it the app serves stored state and syncing is off. |
+| `GITHUB_TOKEN` | — | Read-only. One fine-grained token with **All repositories** covers every project you follow now or later — see [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md#the-token). Without it the app serves stored state and syncing is off. |
 | `COMPANION_DB` | `data/companion.db` | SQLite file. Back this up; it is the whole application state. |
 | `COMPANION_CONFIG` | `companion.config.json` | Config path. |
 | `PORT` / `HOST` | `8787` / `0.0.0.0` | Listen address. Railway assigns `PORT` — don't set it there. |
