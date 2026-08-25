@@ -89,6 +89,8 @@ interface RawPull {
 }
 
 export class HttpGitHubClient implements GitHubPort {
+  /** CI surfaces already warned about, so a missing permission logs once rather than per PR. */
+  readonly #warnedSurfaces = new Set<string>();
   readonly #token: string;
   readonly #baseUrl: string;
   readonly #fetch: typeof fetch;
@@ -149,20 +151,54 @@ export class HttpGitHubClient implements GitHubPort {
   }
 
   /**
+   * Read one of the two CI surfaces, tolerating the token not being allowed to.
+   *
+   * Both CI endpoints need a permission of their own — `Checks` for check runs, `Commit statuses`
+   * for the older status API — and a fine-grained token can perfectly reasonably be issued
+   * without either. When that happens GitHub answers 403, and the naive thing to do is let it
+   * propagate: `observe()` throws, the sync is recorded as failed, and the owner loses pull
+   * requests, workstreams and decisions for that repository because one *optional* signal was
+   * denied. Losing everything to protect nothing.
+   *
+   * So CI is best-effort. 403 (not granted) and 404 (nothing there) both mean "no CI visible",
+   * which is what `CiState.NONE` already says and what the interface renders as "no checks
+   * reported" — a phrase that is true either way and never claims a green build. Anything else,
+   * including 401 on a bad token and 5xx, still propagates: those are real failures and the
+   * owner should see the repository marked stale rather than quietly missing CI.
+   */
+  async #readCiSurface<T>(path: string, surface: string, empty: T): Promise<T> {
+    try {
+      return await this.#get<T>(path);
+    } catch (error) {
+      if (error instanceof GitHubApiError && (error.statusCode === 403 || error.statusCode === 404)) {
+        // Once per observation, not once per pull request: a token missing a permission would
+        // otherwise print a line for every PR in the repository, every cycle.
+        if (!this.#warnedSurfaces.has(surface)) {
+          this.#warnedSurfaces.add(surface);
+          console.warn(
+            `[companion] cannot read ${surface} (HTTP ${error.statusCode}). CI will show as ` +
+              `"no checks reported" for this repository. Grant the token read access to ${surface} ` +
+              `if you want CI state.`,
+          );
+        }
+        return empty;
+      }
+      throw error;
+    }
+  }
+
+  /**
    * Commit statuses for a head SHA, mapped onto the same shape as check runs.
    *
    * A missing or empty combined status is a normal answer, not a failure.
    */
   async #commitStatuses(repositoryFullName: string, sha: string): Promise<RawCommitStatus[]> {
-    try {
-      const combined = await this.#get<RawCombinedStatus>(
-        `/repos/${repositoryFullName}/commits/${sha}/status`,
-      );
-      return combined.statuses ?? [];
-    } catch (error) {
-      if (error instanceof GitHubApiError && error.statusCode === 404) return [];
-      throw error;
-    }
+    const combined = await this.#readCiSurface<RawCombinedStatus>(
+      `/repos/${repositoryFullName}/commits/${sha}/status`,
+      "Commit statuses",
+      { state: "pending", total_count: 0, statuses: [] },
+    );
+    return combined.statuses ?? [];
   }
 
   async observe(repositoryFullName: string, options: ObserveOptions = {}): Promise<GitHubObservation> {
@@ -193,7 +229,7 @@ export class HttpGitHubClient implements GitHubPort {
       >(`/repos/${repositoryFullName}/pulls/${summary.number}/reviews`);
 
       // Both halves of GitHub's CI surface. A repository may use either, both, or neither.
-      const checks = await this.#get<{
+      const checks = await this.#readCiSurface<{
         check_runs: {
           id: number;
           name: string;
@@ -203,7 +239,9 @@ export class HttpGitHubClient implements GitHubPort {
           completed_at?: string | null;
           html_url?: string;
         }[];
-      }>(`/repos/${repositoryFullName}/commits/${detail.head.sha}/check-runs`);
+      }>(`/repos/${repositoryFullName}/commits/${detail.head.sha}/check-runs`, "Checks", {
+        check_runs: [],
+      });
       const statuses = await this.#commitStatuses(repositoryFullName, detail.head.sha);
 
       pullRequests.push(
