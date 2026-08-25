@@ -21,6 +21,21 @@ export interface GitHubReviewObservation {
 }
 
 /**
+ * An issue comment on a pull request.
+ *
+ * Read for one reason: a repository worked by a single account cannot produce an approving
+ * review, because GitHub refuses to let anyone review their own pull request. The verdict is
+ * still written — as a comment. See `comment-verdict.ts`.
+ */
+export interface GitHubCommentObservation {
+  id: number;
+  author: string;
+  body: string;
+  createdAt: string;
+  htmlUrl: string;
+}
+
+/**
  * GitHub reports CI two ways and a repository may use either or both.
  *
  * `CHECK_RUN` is the Checks API, written by GitHub Actions and modern apps. `COMMIT_STATUS` is
@@ -86,6 +101,12 @@ export interface GitHubPullRequestObservation {
   requestedReviewers: string[];
   reviews: GitHubReviewObservation[];
   checks: GitHubCheckObservation[];
+  /**
+   * Optional for the same reason `commitId` is: an observation captured before comments were
+   * read, or a hand-built fixture, simply has none. Absence must degrade to "no comment-borne
+   * verdict", never throw.
+   */
+  comments?: GitHubCommentObservation[];
   body?: string;
 }
 

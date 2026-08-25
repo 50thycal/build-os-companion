@@ -9,6 +9,7 @@
 import type { BuildOsPaths } from "../../domain/state.ts";
 import type {
   GitHubCheckObservation,
+  GitHubCommentObservation,
   GitHubObservation,
   GitHubPullRequestObservation,
   GitHubReviewObservation,
@@ -192,6 +193,25 @@ export class HttpGitHubClient implements GitHubPort {
         { id: number; user?: { login?: string }; state: string; submitted_at?: string; html_url: string }[]
       >(`/repos/${repositoryFullName}/pulls/${summary.number}/reviews`);
 
+      /**
+       * Issue comments, for verdicts GitHub would not let the reviewer file as a review.
+       * One extra request per PR per cycle, which is the price of the gate working at all in a
+       * single-account repository. See `comment-verdict.ts`.
+       *
+       * Alone among these calls it is additive rather than load-bearing, so its failure must not
+       * sink the poll: everything else here decides whether the PR is seen at all. Left
+       * `undefined` rather than `[]` on failure, because those mean different things — "not
+       * read" must not read downstream as "read, and there were none".
+       */
+      let comments: RawComment[] | undefined;
+      try {
+        comments = await this.#get<RawComment[]>(
+          `/repos/${repositoryFullName}/issues/${summary.number}/comments`,
+        );
+      } catch {
+        comments = undefined;
+      }
+
       // Both halves of GitHub's CI surface. A repository may use either, both, or neither.
       const checks = await this.#get<{
         check_runs: {
@@ -207,7 +227,7 @@ export class HttpGitHubClient implements GitHubPort {
       const statuses = await this.#commitStatuses(repositoryFullName, detail.head.sha);
 
       pullRequests.push(
-        toObservation(detail, reviews, checks.check_runs, statuses, repositoryFullName),
+        toObservation(detail, reviews, comments, checks.check_runs, statuses, repositoryFullName),
       );
     }
 
@@ -300,6 +320,14 @@ export function isBotAuthor(login: string, type?: string): boolean {
   return type === "Bot" || /\[bot\]$/i.test(login);
 }
 
+interface RawComment {
+  id: number;
+  user?: { login?: string };
+  body?: string;
+  created_at: string;
+  html_url: string;
+}
+
 function toObservation(
   pr: RawPull,
   reviews: {
@@ -310,6 +338,7 @@ function toObservation(
     html_url: string;
     commit_id?: string;
   }[],
+  comments: RawComment[] | undefined,
   checkRuns: {
     id: number;
     name: string;
@@ -332,6 +361,19 @@ function toObservation(
       htmlUrl: r.html_url,
       commitId: r.commit_id,
     }));
+
+  // Array-checked, not just presence-checked: an endpoint that answers with an error object
+  // carrying a 200, or a payload shape that changes, must degrade to "not read" like any other
+  // failure rather than throw inside the mapper and take the whole poll down with it.
+  const mappedComments: GitHubCommentObservation[] | undefined = Array.isArray(comments)
+    ? comments.map((c) => ({
+        id: c.id,
+        author: c.user?.login ?? "unknown",
+        body: c.body ?? "",
+        createdAt: c.created_at,
+        htmlUrl: c.html_url,
+      }))
+    : undefined;
 
   const htmlUrl = pr.html_url ?? `https://github.com/${repositoryFullName}/pull/${pr.number}`;
 
@@ -373,6 +415,7 @@ function toObservation(
     mergeableState: pr.mergeable_state,
     requestedReviewers: (pr.requested_reviewers ?? []).map((r) => r.login),
     reviews: mappedReviews,
+    comments: mappedComments,
     checks: mappedChecks,
   };
 }

@@ -15,6 +15,8 @@ import type {
 } from "../../domain/state.ts";
 import type { SourceRef } from "../../domain/provenance.ts";
 import type { GitHubPullRequestObservation } from "./types.ts";
+import { commentVerdicts } from "./comment-verdict.ts";
+import { isApprovingVerdict } from "../../domain/state.ts";
 
 export function deriveLifecycle(pr: GitHubPullRequestObservation): PullRequestLifecycle {
   if (pr.merged) return "MERGED";
@@ -37,17 +39,55 @@ export function deriveLifecycle(pr: GitHubPullRequestObservation): PullRequestLi
  * reason about. A reviewer who approved and then requested changes has one current position, not
  * two, and the historical union of every `APPROVED` review would silently keep the old one alive.
  */
-function activeReviews(pr: GitHubPullRequestObservation): GitHubPullRequestObservation["reviews"] {
-  const latestByReviewer = new Map<string, GitHubPullRequestObservation["reviews"][number]>();
+interface Position {
+  author: string;
+  at: string;
+  approving: boolean;
+  changesRequested: boolean;
+  /** The commit the position was taken against, when one is recorded. */
+  head?: string;
+}
+
+function activePositions(pr: GitHubPullRequestObservation): Position[] {
+  const latestByReviewer = new Map<string, Position>();
+
+  const consider = (position: Position): void => {
+    const existing = latestByReviewer.get(position.author);
+    if (!existing || position.at > existing.at) latestByReviewer.set(position.author, position);
+  };
 
   for (const review of pr.reviews) {
     if (review.state === "DISMISSED" || review.state === "PENDING") continue;
     // COMMENTED does not change a reviewer's verdict, so it must not displace one.
     if (review.state === "COMMENTED") continue;
-    const existing = latestByReviewer.get(review.author);
-    if (!existing || review.submittedAt > existing.submittedAt) {
-      latestByReviewer.set(review.author, review);
-    }
+    consider({
+      author: review.author,
+      at: review.submittedAt,
+      approving: review.state === "APPROVED",
+      changesRequested: review.state === "CHANGES_REQUESTED",
+      head: review.commitId,
+    });
+  }
+
+  /**
+   * A comment carrying an explicit verdict is a position of the same standing as a review.
+   *
+   * It has to be, or the gate is unsatisfiable wherever GitHub refuses the review artifact — a
+   * repository worked by one account, which is every project this was built for. It is not the
+   * `COMMENTED` case above: that is a review deliberately withholding a verdict, whereas this
+   * one states a verdict in a form nothing writes by accident.
+   *
+   * Merged into the same per-author map on purpose. A reviewer who approves in a review and
+   * later objects in a comment has one current position, not two, and whichever came last is it.
+   */
+  for (const position of commentVerdicts(pr.comments)) {
+    consider({
+      author: position.author,
+      at: position.at,
+      approving: isApprovingVerdict(position.verdict),
+      changesRequested: position.verdict === "CHANGES_REQUIRED",
+      head: position.reviewedHead,
+    });
   }
 
   return [...latestByReviewer.values()];
@@ -62,9 +102,9 @@ function activeReviews(pr: GitHubPullRequestObservation): GitHubPullRequestObser
  */
 export function deriveApprovedHeadShas(pr: GitHubPullRequestObservation): string[] {
   const shas = new Set<string>();
-  for (const review of activeReviews(pr)) {
-    if (review.state !== "APPROVED") continue;
-    if (review.commitId) shas.add(review.commitId.toLowerCase());
+  for (const position of activePositions(pr)) {
+    if (!position.approving) continue;
+    if (position.head) shas.add(position.head.toLowerCase());
   }
   return [...shas].sort();
 }
@@ -76,9 +116,9 @@ export function deriveApprovedHeadShas(pr: GitHubPullRequestObservation): string
  * than a flag: while it is non-empty, the gate is closed no matter who else approved.
  */
 export function deriveChangesRequestedBy(pr: GitHubPullRequestObservation): string[] {
-  return activeReviews(pr)
-    .filter((review) => review.state === "CHANGES_REQUESTED")
-    .map((review) => review.author)
+  return activePositions(pr)
+    .filter((position) => position.changesRequested)
+    .map((position) => position.author)
     .sort();
 }
 

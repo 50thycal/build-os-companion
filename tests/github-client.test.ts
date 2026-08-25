@@ -93,6 +93,53 @@ describe("HttpGitHubClient", () => {
     expect(pr.checks[0]!.conclusion).toBe("failure");
   });
 
+  it("reads issue comments, so a comment-borne verdict is observable", async () => {
+    const client = new HttpGitHubClient({
+      token: "t",
+      fetchImpl: routedFetch({
+        [`/repos/${REPO}`]: { default_branch: "main" },
+        [`/repos/${REPO}/pulls?state=all&sort=updated&direction=desc&per_page=30`]: [PULL],
+        [`/repos/${REPO}/pulls/84`]: PULL,
+        [`/repos/${REPO}/pulls/84/reviews`]: [],
+        [`/repos/${REPO}/issues/84/comments`]: [
+          {
+            id: 55,
+            user: { login: "reviewer-rae" },
+            body: "Build OS review verdict: Approved",
+            created_at: "2026-08-23T14:00:00Z",
+            html_url: "https://github.com/o/r/pull/84#issuecomment-55",
+          },
+        ],
+        [`/repos/${REPO}/commits/headsha/check-runs`]: { check_runs: [] },
+      }),
+    });
+
+    const pr = (await client.observe(REPO)).pullRequests[0]!;
+    expect(pr.comments).toHaveLength(1);
+    expect(pr.comments![0]!.author).toBe("reviewer-rae");
+    expect(pr.comments![0]!.body).toContain("Build OS review verdict");
+  });
+
+  it("survives a comments endpoint that fails, and says it did not read them", async () => {
+    // Alone among these calls it is additive: everything else decides whether the PR is seen at
+    // all. `undefined` rather than `[]` keeps "not read" distinct from "read, and there were
+    // none" — the difference between an unknown verdict and a known absent one.
+    const client = new HttpGitHubClient({
+      token: "t",
+      fetchImpl: routedFetch({
+        [`/repos/${REPO}`]: { default_branch: "main" },
+        [`/repos/${REPO}/pulls?state=all&sort=updated&direction=desc&per_page=30`]: [PULL],
+        [`/repos/${REPO}/pulls/84`]: PULL,
+        [`/repos/${REPO}/pulls/84/reviews`]: [],
+        [`/repos/${REPO}/commits/headsha/check-runs`]: { check_runs: [] },
+      }),
+    });
+
+    const observation = await client.observe(REPO);
+    expect(observation.pullRequests).toHaveLength(1);
+    expect(observation.pullRequests[0]!.comments).toBeUndefined();
+  });
+
   it("skips PRs untouched since the cursor", async () => {
     const client = new HttpGitHubClient({
       token: "t",
