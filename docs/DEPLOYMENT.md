@@ -40,6 +40,17 @@ Railway reads `railway.json`, builds the `Dockerfile`, and health-checks `/healt
 > up looking perfectly healthy and silently forgets everything on every deploy — including your
 > read cursor, so "since I last checked" resets to "everything" each time.
 
+The mount is declared here, in Railway, and **not** in the Dockerfile. Railway refuses to build an
+image containing a `VOLUME` instruction at all:
+
+```text
+dockerfile invalid: docker VOLUME at Line 25 is not supported, use Railway Volumes
+```
+
+So the Dockerfile deliberately has none, and a test asserts it stays that way. Nothing is lost:
+`VOLUME` only ever declared an *anonymous* volume as the default, which is worse here than
+nothing — a fresh unnamed volume per container that nobody would think to preserve or back up.
+
 **3. Set variables.** Service → **Variables**:
 
 | Variable | Value | Why |
