@@ -138,13 +138,27 @@ token is both the correct scope and the safest one.
 Use a **fine-grained** token with **Repository access: All repositories**, and these permissions,
 all read-only:
 
-| Permission | Reads |
-|---|---|
-| Metadata | the repository itself (mandatory) |
-| Contents | `ACTIVE.md`, workstream files, `DECISIONS.md` |
-| Pull requests | PR state, draft/ready, reviews, base and head |
-| Checks | check runs |
-| Commit statuses | the other half of CI — Vercel-style statuses |
+| Permission | Reads | Needed? |
+|---|---|---|
+| Metadata | the repository itself | **Required** — GitHub adds it for you |
+| Contents | `ACTIVE.md`, workstream files, `DECISIONS.md` | **Required** — this is the Build OS layer |
+| Pull requests | PR state, draft/ready, reviews, base and head | **Required** |
+| Checks | check runs, written by GitHub Actions | Optional |
+| Commit statuses | the other half of CI — Vercel-style statuses | Optional |
+
+Only the first three are offered by default. **Checks** and **Commit statuses** are added through
+**+ Add permissions** at the top right of the permissions box; that list is alphabetical, so
+`Checks` sits near the top, between *Attestations* and *Code scanning alerts*.
+
+Both CI permissions are genuinely optional. Without them the Companion syncs normally and every
+pull request reports **"no checks reported"** — which is what it reports today regardless, since
+neither seeded repository runs any CI at all. Grant them when a followed repository starts
+producing CI you want to see; a token's permissions can be edited later without re-minting it,
+and existing sessions are unaffected.
+
+A missing CI permission is survivable by design: the client logs one line naming it and carries
+on. Losing pull requests, workstreams and decisions because one CI endpoint returned 403 would be
+losing everything to protect nothing.
 
 **"All repositories" covers every repository you own now and every one you create later.** So
 adding a project is adding a line to `companion.config.json` and restarting — the token never
