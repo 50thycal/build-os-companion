@@ -16,7 +16,7 @@
  * choice stays reversible.
  */
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 /**
  * `seq` is the spine of the whole design.
@@ -100,4 +100,10 @@ export const MIGRATIONS: string[][] = [
        last_seq        INTEGER NOT NULL
      )`,
   ],
+
+  // ---- v2 -----------------------------------------------------------------
+  // The adoption boundary has to survive a restart. It is the date that decides whether a
+  // workstream predating the project's move to v0.5 is judged by the v0.5 review gate, so a
+  // database that forgot it would start accusing settled work after every deploy.
+  [`ALTER TABLE projects ADD COLUMN build_os_adopted_at TEXT`],
 ];

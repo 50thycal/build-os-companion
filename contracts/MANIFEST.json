@@ -2,7 +2,7 @@
   "$comment": "Vendored Build OS protocol contracts. See contracts/README.md.",
   "canonicalRepository": "50thycal/build-os",
   "canonicalRef": "main",
-  "buildOsVersion": "0.4",
+  "buildOsVersion": "0.5",
   "vendoredAt": "2026-08-24",
   "contracts": [
     {
@@ -10,6 +10,12 @@
       "canonicalPath": "contracts/agent-session-checkpoint.v1.schema.json",
       "sha256": "9001e8083732fad4cb3880654c094a833106543d70be8ebb1d6f8eba7f6dbe46",
       "consumedBy": "src/ingest/checkpoint/agent-session-checkpoint.v1.schema.json"
+    },
+    {
+      "file": "WORKSTREAM.template.md",
+      "canonicalPath": "templates/WORKSTREAM.template.md",
+      "sha256": "36edf386cb7f17fd9861d8c7910a994ffef6b61f698c44c06af11716a3804a78",
+      "readBy": "tests/review-state-parse.test.ts"
     }
   ]
 }

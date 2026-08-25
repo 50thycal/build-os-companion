@@ -29,6 +29,59 @@ export function deriveLifecycle(pr: GitHubPullRequestObservation): PullRequestLi
  *
  * `PENDING` reviews are drafts the reviewer has not submitted and are ignored entirely.
  */
+/**
+ * The latest review each reviewer actually stands behind.
+ *
+ * `DISMISSED` reviews were explicitly retracted; `PENDING` ones were never submitted. What
+ * remains, newest per reviewer, is the set of live opinions — which is the only set a gate may
+ * reason about. A reviewer who approved and then requested changes has one current position, not
+ * two, and the historical union of every `APPROVED` review would silently keep the old one alive.
+ */
+function activeReviews(pr: GitHubPullRequestObservation): GitHubPullRequestObservation["reviews"] {
+  const latestByReviewer = new Map<string, GitHubPullRequestObservation["reviews"][number]>();
+
+  for (const review of pr.reviews) {
+    if (review.state === "DISMISSED" || review.state === "PENDING") continue;
+    // COMMENTED does not change a reviewer's verdict, so it must not displace one.
+    if (review.state === "COMMENTED") continue;
+    const existing = latestByReviewer.get(review.author);
+    if (!existing || review.submittedAt > existing.submittedAt) {
+      latestByReviewer.set(review.author, review);
+    }
+  }
+
+  return [...latestByReviewer.values()];
+}
+
+/**
+ * The commits named by approvals that are still a reviewer's current position.
+ *
+ * GitHub stamps a review with the commit id it was submitted against, which makes this the one
+ * final-head authority that cannot be self-referential: unlike a SHA written inside a commit, it
+ * is created after the commit it describes exists.
+ */
+export function deriveApprovedHeadShas(pr: GitHubPullRequestObservation): string[] {
+  const shas = new Set<string>();
+  for (const review of activeReviews(pr)) {
+    if (review.state !== "APPROVED") continue;
+    if (review.commitId) shas.add(review.commitId.toLowerCase());
+  }
+  return [...shas].sort();
+}
+
+/**
+ * Reviewers whose current position is `Changes required`.
+ *
+ * One reviewer's approval never cancels another's outstanding objection, so this is a list rather
+ * than a flag: while it is non-empty, the gate is closed no matter who else approved.
+ */
+export function deriveChangesRequestedBy(pr: GitHubPullRequestObservation): string[] {
+  return activeReviews(pr)
+    .filter((review) => review.state === "CHANGES_REQUESTED")
+    .map((review) => review.author)
+    .sort();
+}
+
 export function deriveReviewState(pr: GitHubPullRequestObservation): ReviewState {
   const latestByReviewer = new Map<string, GitHubPullRequestObservation["reviews"][number]>();
 
@@ -103,6 +156,7 @@ export function derivePullRequestState(
     lifecycle: deriveLifecycle(pr),
     draft: pr.draft,
     headBranch: pr.headRef,
+    headSha: pr.headSha,
     baseBranch: pr.baseRef,
     author: pr.author,
     createdAt: pr.createdAt,
@@ -111,6 +165,8 @@ export function derivePullRequestState(
     reviewState: deriveReviewState(pr),
     ciState: deriveCiState(pr),
     requestedReviewers: [...pr.requestedReviewers],
+    approvedHeadShas: deriveApprovedHeadShas(pr),
+    changesRequestedBy: deriveChangesRequestedBy(pr),
     // Populated by the Build OS layer, which is the only thing that knows about workstreams.
     workstreamIds: [],
     sourceUrl: pr.htmlUrl,

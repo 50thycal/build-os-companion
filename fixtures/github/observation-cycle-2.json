@@ -38,7 +38,8 @@
           "completedAt": "2026-08-23T13:40:00Z",
           "htmlUrl": "https://github.com/50thycal/cargo-ship/runs/9002"
         }
-      ]
+      ],
+      "headSha": "5ddf2e2bd4313418c46df75bd5a72be0b30e8cdb"
     },
     {
       "number": 91,
@@ -74,7 +75,8 @@
           "completedAt": "2026-08-22T15:58:00Z",
           "htmlUrl": "https://github.com/50thycal/cargo-ship/runs/9100"
         }
-      ]
+      ],
+      "headSha": "374ab4728a62e4cf39f9f7dd522452611a1695ad"
     },
     {
       "number": 77,
@@ -92,7 +94,8 @@
       "mergeableState": "dirty",
       "requestedReviewers": [],
       "reviews": [],
-      "checks": []
+      "checks": [],
+      "headSha": "9b43f0c5300c115bb199692c22bdb36d370fad7c"
     }
   ]
 }

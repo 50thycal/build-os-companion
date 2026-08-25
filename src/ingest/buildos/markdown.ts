@@ -23,6 +23,17 @@ export interface MarkdownSection {
 const FENCE = /^\s*```/;
 
 /** Strip fenced code blocks so examples inside documentation are never parsed as content. */
+/**
+ * Remove HTML comments.
+ *
+ * Build OS templates carry their instructions in comments — including the list of legal verdicts.
+ * A field that survives only inside a comment is guidance, never a project's recorded state, so
+ * anything reading a durable value must not see them.
+ */
+export function stripHtmlComments(markdown: string): string {
+  return markdown.replace(/<!--[\s\S]*?-->/g, "");
+}
+
 export function stripCodeFences(markdown: string): string {
   const out: string[] = [];
   let inFence = false;

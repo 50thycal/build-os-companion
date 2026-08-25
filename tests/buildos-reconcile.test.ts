@@ -125,3 +125,149 @@ describe("workstream event normalization", () => {
     expect(blocked?.summaryShort).toContain("prize-payout rules");
   });
 });
+
+describe("v0.5 review-field warnings", () => {
+  function reconcileOne(reviewSection: string) {
+    const base = buildOsSnapshotInput();
+    const input = {
+      ...base,
+      activeBoardMarkdown: `# Active Work
+
+| ID | Title | Phase | Status | Next Step | PRs |
+|---|---|---|---|---|---|
+| WS-011 | Review gate | REVIEW | Active | Await review | #84 |
+`,
+      workstreamFiles: [
+        {
+          path: "docs/workstreams/WS-011-review-gate.md",
+          markdown: `# WS-011 — Review gate
+
+**Phase:** REVIEW · **Status:** Active
+
+## Review State
+
+${reviewSection}
+
+## Related PRs
+
+#84
+`,
+          commitSha: "abc123",
+          htmlUrl: "https://github.com/50thycal/cargo-ship/blob/main/docs/workstreams/WS-011-review-gate.md",
+        },
+      ],
+    };
+    return reconcileBuildOsState(PROJECT, input);
+  }
+
+  it("carries verdict and reviewed head onto workstream state", () => {
+    const head = "0123456789abcdef0123456789abcdef01234567";
+    const ws = reconcileOne(`**Verdict:** Approved\n**Reviewed head:** ${head}`).workstreams[0]!;
+    expect(ws.reviewRecords).toEqual([
+      { prNumber: 84, verdict: "APPROVED", reviewedHead: head, finalized: false },
+    ]);
+  });
+
+  it("binds a record that names no PR to the workstream's most recent linked PR", () => {
+    // #84 is the only linked PR here; with several, the record binds to the newest rather than
+    // to all of them, which is what stopped older merged PRs being reported as unapproved.
+    const ws = reconcileOne("**Verdict:** In review").workstreams[0]!;
+    expect(ws.reviewRecords[0]!.prNumber).toBe(84);
+  });
+
+  it("keeps a per-PR review table as one record per PR", () => {
+    const head = "0123456789abcdef0123456789abcdef01234567";
+    const other = "89abcdef0123456789abcdef0123456789abcdef";
+    const ws = reconcileOne(
+      [
+        "| PR | Verdict | Reviewed head | Finalization |",
+        "|---|---|---|---|",
+        `| #84 | Approved | ${head} | pushed |`,
+        `| #91 | Changes required | ${other} | — |`,
+      ].join("\n"),
+    ).workstreams[0]!;
+    expect(ws.reviewRecords).toEqual([
+      { prNumber: 84, verdict: "APPROVED", reviewedHead: head, finalized: true },
+      { prNumber: 91, verdict: "CHANGES_REQUIRED", reviewedHead: other, finalized: false },
+    ]);
+  });
+
+  it("warns when an approval names no commit, and does not treat it as approved evidence", () => {
+    const result = reconcileOne("**Verdict:** Approved\n**Reviewed head:** —");
+    expect(result.warnings.map((w) => w.code)).toContain("APPROVED_WITHOUT_REVIEWED_HEAD");
+    expect(result.workstreams[0]!.reviewRecords[0]!.reviewedHead).toBeUndefined();
+  });
+
+  it("warns on a verdict outside the allowed set and leaves the field absent", () => {
+    const result = reconcileOne("**Verdict:** Looks good");
+    expect(result.warnings.map((w) => w.code)).toContain("REVIEW_VERDICT_MALFORMED");
+    expect(result.workstreams[0]!.reviewRecords[0]?.verdict).toBeUndefined();
+  });
+
+  it("warns on an abbreviated reviewed head", () => {
+    const result = reconcileOne("**Verdict:** In review\n**Reviewed head:** 0123456");
+    expect(result.warnings.map((w) => w.code)).toContain("REVIEWED_HEAD_MALFORMED");
+    expect(result.workstreams[0]!.reviewRecords[0]!.reviewedHead).toBeUndefined();
+  });
+
+  it("says nothing about a pre-v0.5 workstream with a prose review section", () => {
+    const result = reconcileOne("Not started.");
+    const reviewCodes = result.warnings
+      .map((w) => w.code)
+      .filter((c) => c.startsWith("REVIEW") || c.startsWith("APPROVED"));
+    expect(reviewCodes).toEqual([]);
+    expect(result.workstreams[0]!.reviewRecords).toEqual([]);
+  });
+});
+
+describe("v0.5 participation metadata", () => {
+  function reconcileWith(header: string, buildOsVersion?: string) {
+    const base = buildOsSnapshotInput();
+    return reconcileBuildOsState(PROJECT, {
+      ...base,
+      buildOsVersion,
+      activeBoardMarkdown: [
+        "# Active Work",
+        "",
+        "| ID | Title | Phase | Status | Next Step | PRs |",
+        "|---|---|---|---|---|---|",
+        "| WS-012 | Gate metadata | REVIEW | Active | Await review | #84 |",
+      ].join("\n"),
+      workstreamFiles: [
+        {
+          path: "docs/workstreams/WS-012-gate-metadata.md",
+          markdown: `# WS-012 — Gate metadata\n\n${header}\n\n## Related PRs\n\n#84\n`,
+          commitSha: "abc123",
+          htmlUrl: "https://github.com/50thycal/cargo-ship/blob/main/docs/workstreams/WS-012.md",
+        },
+      ],
+    }).workstreams[0]!;
+  }
+
+  it("reads a version the workstream declares for itself", () => {
+    const ws = reconcileWith("**Phase:** REVIEW · **Status:** Active · **Build OS:** v0.5");
+    expect(ws.protocolVersion).toBe("v0.5");
+  });
+
+  it("falls back to the project's adopted version", () => {
+    const ws = reconcileWith("**Phase:** REVIEW · **Status:** Active", "v0.5");
+    expect(ws.protocolVersion).toBe("v0.5");
+  });
+
+  it("prefers the workstream's own declaration over the project pin", () => {
+    const ws = reconcileWith("**Phase:** REVIEW · **Status:** Active · **Build OS:** v0.4", "v0.5");
+    expect(ws.protocolVersion).toBe("v0.4");
+    expect(ws.protocolVersionSource).toBe("WORKSTREAM");
+  });
+
+  it("records that an inherited version came from the project, not the file", () => {
+    // The distinction the gate needs: a pin the project holds is not a claim that this
+    // workstream's history was done under it.
+    const ws = reconcileWith("**Phase:** REVIEW · **Status:** Active", "v0.5");
+    expect(ws.protocolVersionSource).toBe("PROJECT");
+  });
+
+  it("leaves it absent when neither declares one", () => {
+    expect(reconcileWith("**Phase:** REVIEW · **Status:** Active").protocolVersion).toBeUndefined();
+  });
+});

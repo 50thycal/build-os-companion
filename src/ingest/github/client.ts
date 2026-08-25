@@ -302,7 +302,14 @@ export function isBotAuthor(login: string, type?: string): boolean {
 
 function toObservation(
   pr: RawPull,
-  reviews: { id: number; user?: { login?: string }; state: string; submitted_at?: string; html_url: string }[],
+  reviews: {
+    id: number;
+    user?: { login?: string };
+    state: string;
+    submitted_at?: string;
+    html_url: string;
+    commit_id?: string;
+  }[],
   checkRuns: {
     id: number;
     name: string;
@@ -323,6 +330,7 @@ function toObservation(
       state: r.state.toUpperCase() as GitHubReviewObservation["state"],
       submittedAt: r.submitted_at!,
       htmlUrl: r.html_url,
+      commitId: r.commit_id,
     }));
 
   const htmlUrl = pr.html_url ?? `https://github.com/${repositoryFullName}/pull/${pr.number}`;
@@ -356,6 +364,7 @@ function toObservation(
     mergedAt: pr.merged_at ?? undefined,
     closedAt: pr.closed_at ?? undefined,
     headRef: pr.head.ref,
+    headSha: pr.head.sha,
     baseRef: pr.base.ref,
     author,
     authorIsBot: isBotAuthor(author, pr.user?.type),

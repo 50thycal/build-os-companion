@@ -31,7 +31,7 @@ const FILES: Record<string, string> = {
 };
 
 function toObservation(raw: Record<string, never>): GitHubPullRequestObservation {
-  const head = raw.head as unknown as { ref: string };
+  const head = raw.head as unknown as { ref: string; sha?: string };
   const user = raw.user as unknown as { login: string; type?: string };
   return {
     number: raw.number as unknown as number,
@@ -44,6 +44,9 @@ function toObservation(raw: Record<string, never>): GitHubPullRequestObservation
     mergedAt: (raw.merged_at as unknown as string) ?? undefined,
     closedAt: (raw.closed_at as unknown as string) ?? undefined,
     headRef: head.ref,
+    // Captured payloads predate the v0.5 review gate, so some carry no head sha. An empty
+    // string is honest here: it matches no reviewed head, so nothing is falsely verified.
+    headSha: head.sha ?? "",
     baseRef: (raw.base as unknown as { ref: string }).ref,
     author: user.login,
     authorIsBot: false,
