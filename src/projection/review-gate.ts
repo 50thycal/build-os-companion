@@ -38,6 +38,7 @@
 
 import {
   isApprovingVerdict,
+  objectionLabel,
   participatesInReviewGate,
   reviewRecordFor,
 } from "../domain/state.ts";
@@ -236,8 +237,9 @@ function checkRecord(
       workstreamId: ws.workstreamId,
       message:
         `${ws.workstreamId} records ${record.verdict} for PR #${pr.number}, but ` +
-        `${pr.changesRequestedBy.join(", ")} ${pr.changesRequestedBy.length === 1 ? "has" : "have"} ` +
-        `an outstanding changes request on GitHub. The gate stays closed until that is resolved.`,
+        `${pr.changesRequestedBy.map(objectionLabel).join(", ")} ` +
+        `${pr.changesRequestedBy.length === 1 ? "has" : "have"} an outstanding changes request ` +
+        `on GitHub. The gate stays closed until that is resolved.`,
       sources,
     });
   }

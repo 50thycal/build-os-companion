@@ -206,7 +206,7 @@ describe("merge finalization — the head a commit cannot name", () => {
     const pr = pullRequest({
       headSha: FINAL_HEAD,
       approvedHeadShas: [FINAL_HEAD],
-      changesRequestedBy: ["sam"],
+      changesRequestedBy: [{ actor: "sam", author: "sam" }],
     });
     expect(codes(checkReviewGate([finalized()], [pr]))).toContain("FINAL_HEAD_UNVERIFIED");
   });
@@ -365,7 +365,7 @@ describe("GitHub review currency", () => {
     const pr = pullRequest({
       headSha: FINAL_HEAD,
       approvedHeadShas: [],
-      changesRequestedBy: ["rae"],
+      changesRequestedBy: [{ actor: "rae", author: "rae" }],
     });
     const warnings = codes(checkReviewGate([finalized()], [pr]));
     expect(warnings).toContain("FINAL_HEAD_UNVERIFIED");
@@ -377,13 +377,13 @@ describe("GitHub review currency", () => {
     const pr = pullRequest({
       headSha: FINAL_HEAD,
       approvedHeadShas: [FINAL_HEAD],
-      changesRequestedBy: ["sam"],
+      changesRequestedBy: [{ actor: "sam", author: "sam" }],
     });
     expect(codes(checkReviewGate([finalized()], [pr]))).toContain("FINAL_HEAD_UNVERIFIED");
   });
 
   it("reports the contradiction when GitHub objects to work the workstream calls approved", () => {
-    const pr = pullRequest({ changesRequestedBy: ["sam"] });
+    const pr = pullRequest({ changesRequestedBy: [{ actor: "sam", author: "sam" }] });
     const warnings = checkReviewGate([workstream()], [pr]);
     expect(codes(warnings)).toContain("WORKSTREAM_PR_STATE_MISMATCH");
     expect(warnings[0]!.message).toContain("sam");

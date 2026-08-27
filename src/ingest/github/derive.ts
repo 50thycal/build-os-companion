@@ -16,7 +16,8 @@ import type {
 import type { SourceRef } from "../../domain/provenance.ts";
 import type { GitHubPullRequestObservation } from "./types.ts";
 import { commentVerdicts, implementationActor } from "./comment-verdict.ts";
-import { isApprovingVerdict } from "../../domain/state.ts";
+import { isApprovingVerdict, objectionLabel } from "../../domain/state.ts";
+import type { Objection } from "../../domain/state.ts";
 
 export function deriveLifecycle(pr: GitHubPullRequestObservation): PullRequestLifecycle {
   if (pr.merged) return "MERGED";
@@ -208,14 +209,15 @@ export function deriveApprovedHeadShas(pr: GitHubPullRequestObservation): string
  * One reviewer's approval never cancels another's outstanding objection, so this is a list rather
  * than a flag: while it is non-empty, the gate is closed no matter who else approved.
  */
-export function deriveChangesRequestedBy(pr: GitHubPullRequestObservation): string[] {
-  // Reported by actor where one is declared: two objections relayed through one account are two
-  // objections, and naming the login twice would hide that. An objection counts whether or not
-  // it could have cleared the gate — closing it is always the safe direction.
+export function deriveChangesRequestedBy(pr: GitHubPullRequestObservation): Objection[] {
+  // Both names are kept: the actor is who objected, the login is only how it arrived. Two
+  // objections relayed through one account are two objections, and collapsing them to the login
+  // would hide that. An objection counts whether or not it could have cleared the gate —
+  // closing it is always the safe direction.
   return activePositions(pr)
     .positions.filter((position) => position.changesRequested)
-    .map((position) => position.actor ?? position.author)
-    .sort();
+    .map((position) => ({ actor: position.actor, author: position.author }))
+    .sort((a, b) => objectionLabel(a).localeCompare(objectionLabel(b)));
 }
 
 export function deriveReviewState(pr: GitHubPullRequestObservation): ReviewState {
