@@ -18,6 +18,7 @@ import {
   parseCommentVerdict,
 } from "../src/ingest/github/comment-verdict.ts";
 import { deriveVerdictIntegrityWarnings } from "../src/ingest/github/derive.ts";
+import { objectionLabel } from "../src/domain/state.ts";
 import { deriveApprovedHeadShas, deriveChangesRequestedBy } from "../src/ingest/github/derive.ts";
 import type {
   GitHubCommentObservation,
@@ -161,14 +162,14 @@ describe("a comment verdict is a position of the same standing as a review", () 
   it("clears the head a review could not, when GitHub allowed no review", () => {
     const observation = pr({ comments: [comment()] });
     expect(deriveApprovedHeadShas(observation)).toEqual([HEAD]);
-    expect(deriveChangesRequestedBy(observation)).toEqual([]);
+    expect(deriveChangesRequestedBy(observation).map(objectionLabel)).toEqual([]);
   });
 
   it("closes the gate when the comment objects", () => {
     const body = `Build OS review verdict: Changes required\nReviewed head: ${HEAD}`;
     const observation = pr({ comments: [comment({ body })] });
     expect(deriveApprovedHeadShas(observation)).toEqual([]);
-    expect(deriveChangesRequestedBy(observation)).toEqual(["rae"]);
+    expect(deriveChangesRequestedBy(observation).map(objectionLabel)).toEqual(["rae"]);
   });
 
   it("lets a later comment replace the same author's earlier review", () => {
@@ -188,7 +189,7 @@ describe("a comment verdict is a position of the same standing as a review", () 
       ],
     });
     expect(deriveApprovedHeadShas(observation)).toEqual([]);
-    expect(deriveChangesRequestedBy(observation)).toEqual(["rae"]);
+    expect(deriveChangesRequestedBy(observation).map(objectionLabel)).toEqual(["rae"]);
   });
 
   it("lets a later review replace the same actor's earlier comment", () => {
@@ -212,7 +213,7 @@ describe("a comment verdict is a position of the same standing as a review", () 
       ],
     });
     expect(deriveApprovedHeadShas(observation)).toEqual([]);
-    expect(deriveChangesRequestedBy(observation)).toEqual(["rae"]);
+    expect(deriveChangesRequestedBy(observation).map(objectionLabel)).toEqual(["rae"]);
   });
 
   it("keeps one reviewer's objection alive against another's approving comment", () => {
@@ -230,7 +231,7 @@ describe("a comment verdict is a position of the same standing as a review", () 
       comments: [comment()],
     });
     expect(deriveApprovedHeadShas(observation)).toEqual([HEAD]);
-    expect(deriveChangesRequestedBy(observation)).toEqual(["sam"]);
+    expect(deriveChangesRequestedBy(observation).map(objectionLabel)).toEqual(["sam"]);
   });
 
   it("approves only the head it names, never a later one", () => {
@@ -286,8 +287,11 @@ describe("one GitHub account, several actors", () => {
       ],
     });
 
-    // Same login, two actors, two live positions. The objection survives the later approval.
-    expect(deriveChangesRequestedBy(observation)).toEqual([REVIEWER]);
+    // Same login, two actors, two live positions. The objection survives the later approval,
+    // and the label carries the pipe it came down as well as who spoke.
+    expect(deriveChangesRequestedBy(observation).map(objectionLabel)).toEqual([
+      `${REVIEWER} (via 50thycal)`,
+    ]);
     expect(deriveApprovedHeadShas(observation)).toEqual([HEAD]);
   });
 
@@ -298,7 +302,7 @@ describe("one GitHub account, several actors", () => {
         comment({ id: 2, createdAt: "2026-08-25T11:00:00Z", body: verdict("Approved", REVIEWER) }),
       ],
     });
-    expect(deriveChangesRequestedBy(observation)).toEqual([]);
+    expect(deriveChangesRequestedBy(observation).map(objectionLabel)).toEqual([]);
     expect(deriveApprovedHeadShas(observation)).toEqual([HEAD]);
   });
 
@@ -309,7 +313,16 @@ describe("one GitHub account, several actors", () => {
         comment({ id: 2, author: "50thycal", body: verdict("Changes required", "owner-calvin") }),
       ],
     });
-    expect(deriveChangesRequestedBy(observation)).toEqual(["owner-calvin", REVIEWER].sort());
+    expect(deriveChangesRequestedBy(observation).map(objectionLabel)).toEqual(
+      [`${REVIEWER} (via 50thycal)`, "owner-calvin (via 50thycal)"].sort(),
+    );
+    // Both names retained, not just rendered: the login is transport, the actor is identity.
+    expect(deriveChangesRequestedBy(observation)).toEqual(
+      [
+        { actor: REVIEWER, author: "50thycal" },
+        { actor: "owner-calvin", author: "50thycal" },
+      ].sort((a, b) => objectionLabel(a).localeCompare(objectionLabel(b))),
+    );
   });
 });
 
@@ -350,7 +363,7 @@ describe("independence is established by the record or not at all", () => {
     // be the unsafe direction — the reporter is reported by their transport login.
     const body = `Build OS review verdict: Changes required\nReviewed head: ${HEAD}`;
     const observation = pr({ comments: [comment({ author: "50thycal", body })] });
-    expect(deriveChangesRequestedBy(observation)).toEqual(["50thycal"]);
+    expect(deriveChangesRequestedBy(observation).map(objectionLabel)).toEqual(["50thycal"]);
     expect(deriveApprovedHeadShas(observation)).toEqual([]);
   });
 
@@ -380,7 +393,9 @@ describe("independence is established by the record or not at all", () => {
         }),
       ],
     });
-    expect(deriveChangesRequestedBy(observation)).toEqual([IMPLEMENTER]);
+    expect(deriveChangesRequestedBy(observation).map(objectionLabel)).toEqual([
+      `${IMPLEMENTER} (via rae)`,
+    ]);
   });
 
   it("reads the implementation actor out of the PR body, ignoring quotes and fences", () => {
@@ -389,6 +404,50 @@ describe("independence is established by the record or not at all", () => {
     expect(implementationActor("> Implementation actor: quoted")).toBeUndefined();
     expect(implementationActor("```\nImplementation actor: fenced\n```")).toBeUndefined();
     expect(implementationActor(undefined)).toBeUndefined();
+  });
+});
+
+describe("an objection keeps both names", () => {
+  it("retains the transport login beside the actor, and renders both", () => {
+    // The reviewer's ask: keep the GitHub author as transport provenance rather than collapsing
+    // it into the actor. Two objections through one account must not read as one reviewer.
+    const body = (actor: string) =>
+      `Build OS review verdict: Changes required\nReviewed head: ${HEAD}\nReview actor: ${actor}`;
+    const observation = pr({
+      comments: [
+        comment({ id: 1, author: "50thycal", body: body(REVIEWER) }),
+        comment({ id: 2, author: "50thycal", body: body("owner-calvin") }),
+      ],
+    });
+
+    expect(deriveChangesRequestedBy(observation)).toEqual([
+      { actor: REVIEWER, author: "50thycal" },
+      { actor: "owner-calvin", author: "50thycal" },
+    ]);
+  });
+
+  it("shows the login alone when no actor was declared, and once when they are the same", () => {
+    const anonymous = `Build OS review verdict: Changes required\nReviewed head: ${HEAD}`;
+    expect(
+      deriveChangesRequestedBy(pr({ comments: [comment({ author: "rae", body: anonymous })] })).map(
+        objectionLabel,
+      ),
+    ).toEqual(["rae"]);
+
+    // A GitHub review's actor is its login, so it must not render as "rae (via rae)".
+    const reviewed = pr({
+      reviews: [
+        {
+          id: 1,
+          author: "rae",
+          state: "CHANGES_REQUESTED",
+          submittedAt: "2026-08-25T10:00:00Z",
+          htmlUrl: "u",
+          commitId: HEAD,
+        },
+      ],
+    });
+    expect(deriveChangesRequestedBy(reviewed).map(objectionLabel)).toEqual(["rae"]);
   });
 });
 
@@ -423,7 +482,9 @@ describe("evidence that moved after it was given", () => {
     const body =
       `Build OS review verdict: Changes required\nReviewed head: ${HEAD}\n` +
       `Review actor: ${REVIEWER}\nImplementation actor reviewed: ${IMPLEMENTER}`;
-    expect(deriveChangesRequestedBy(pr({ comments: [edited(body)] }))).toEqual([REVIEWER]);
+    expect(deriveChangesRequestedBy(pr({ comments: [edited(body)] })).map(objectionLabel)).toEqual([
+      `${REVIEWER} (via rae)`,
+    ]);
   });
 
   it("does not fault an unedited comment, or one from before edits were read", () => {

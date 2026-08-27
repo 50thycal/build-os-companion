@@ -10,6 +10,7 @@ import {
   deriveReviewState,
 } from "../src/ingest/github/derive.ts";
 import { projectPullRequests } from "../src/projection/project.ts";
+import { objectionLabel } from "../src/domain/state.ts";
 import { observation } from "./helpers.ts";
 import type { GitHubPullRequestObservation } from "../src/ingest/github/types.ts";
 
@@ -220,7 +221,7 @@ describe("review currency", () => {
       ],
     });
     expect(deriveApprovedHeadShas(observation)).toEqual([]);
-    expect(deriveChangesRequestedBy(observation)).toEqual(["rae"]);
+    expect(deriveChangesRequestedBy(observation).map(objectionLabel)).toEqual(["rae"]);
   });
 
   it("keeps an approval a reviewer reinstated after requesting changes", () => {
@@ -231,7 +232,7 @@ describe("review currency", () => {
       ],
     });
     expect(deriveApprovedHeadShas(observation)).toEqual([A]);
-    expect(deriveChangesRequestedBy(observation)).toEqual([]);
+    expect(deriveChangesRequestedBy(observation).map(objectionLabel)).toEqual([]);
   });
 
   it("reports each reviewer's own current position", () => {
@@ -242,7 +243,7 @@ describe("review currency", () => {
       ],
     });
     expect(deriveApprovedHeadShas(observation)).toEqual([A]);
-    expect(deriveChangesRequestedBy(observation)).toEqual(["sam"]);
+    expect(deriveChangesRequestedBy(observation).map(objectionLabel)).toEqual(["sam"]);
   });
 
   it("ignores a dismissed changes request and a comment that followed an approval", () => {
@@ -254,6 +255,6 @@ describe("review currency", () => {
       ],
     });
     expect(deriveApprovedHeadShas(observation)).toEqual([A]);
-    expect(deriveChangesRequestedBy(observation)).toEqual([]);
+    expect(deriveChangesRequestedBy(observation).map(objectionLabel)).toEqual([]);
   });
 });

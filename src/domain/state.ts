@@ -81,7 +81,7 @@ export interface PullRequestState {
    * Reviewers whose current position is `Changes required`. While this is non-empty the gate is
    * closed — one reviewer's approval never cancels another's outstanding objection.
    */
-  changesRequestedBy: string[];
+  changesRequestedBy: Objection[];
   /**
    * Verdict evidence on this PR that was altered after it was given.
    *
@@ -118,6 +118,33 @@ export type WorkstreamPhase = (typeof WORKSTREAM_PHASES)[number];
 
 export const WORKSTREAM_STATUSES = ["ACTIVE", "PAUSED", "BLOCKED", "ABANDONED", "COMPLETE"] as const;
 export type WorkstreamStatus = (typeof WORKSTREAM_STATUSES)[number];
+
+/**
+ * An outstanding `Changes required`, and who it came from.
+ *
+ * Two names rather than one, because in a single-account repository they are different things:
+ * several actors share one GitHub login, so the login says how the objection arrived, not who
+ * raised it. Collapsing them loses exactly the provenance the review gate exists to keep — two
+ * objections relayed through one account would read as one reviewer repeating themselves.
+ */
+export interface Objection {
+  /**
+   * Who raised it, when the record says. A GitHub review's actor is its login, because GitHub
+   * authenticated it. A comment verdict's is whatever the comment declared; absent when it
+   * declared none, which is also why it could not have cleared the gate.
+   */
+  actor?: string;
+  /** The GitHub account that carried it. Transport, never identity. */
+  author: string;
+}
+
+/** How an objection reads to a person: the actor where known, and the pipe it came down. */
+export function objectionLabel(objection: Objection): string {
+  if (!objection.actor) return objection.author;
+  return objection.actor === objection.author
+    ? objection.actor
+    : `${objection.actor} (via ${objection.author})`;
+}
 
 export const REVIEW_VERDICTS = [
   "NOT_STARTED",

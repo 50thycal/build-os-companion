@@ -3,7 +3,21 @@
 <!-- The Companion's active-work control board. One line per workstream; anything needing a
      paragraph belongs in its file. -->
 
-**Updated:** 2026-08-24 · **Build OS v0.4**
+**Updated:** 2026-08-27 · **Build OS v0.5**
+
+Adopted v0.5 on 2026-08-27; the declaration and the adoption boundary live in `CLAUDE.md`. The
+boundary keeps the *merge gate* off work that predates it — no verdict is demanded for `#1`,
+which merged before adoption.
+
+It does **not** silence the state-agreement check, and that check is currently right about this
+board: WS-001, WS-002, WS-003, WS-005 and WS-007 all say `REVIEW` while `#1`, the pull request
+that delivered them, merged on 2026-08-25. Under v0.5 that reads as a merge-finalization step
+that never recorded the next phase — which is what happened.
+
+**Those phases are the owner's to set, not an agent's to infer.** Each of these workstreams is
+waiting on the owner using the deployed application against real work, which is the only thing
+that can close them; whether that has happened is not visible from the repository. The rows are
+left as they are, and the discrepancy is stated here rather than resolved by guessing.
 
 This board moved here from `50thycal/build-os` when the application was extracted (`DEC-008`).
 Protocol contracts stay in build-os and are vendored under `contracts/`; see `contracts/README.md`.
