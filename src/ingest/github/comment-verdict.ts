@@ -41,6 +41,8 @@ const FULL_SHA = /^[0-9a-f]{40}$/i;
 const MARKER = /^\s*build os review verdict\s*:\s*(.+?)\s*$/i;
 const HEAD = /^\s*reviewed head\s*:\s*(.+?)\s*$/i;
 const ACTOR = /^\s*review actor\s*:\s*(.+?)\s*$/i;
+/** The implementation actor as the reviewer saw it, captured inside the verdict itself. */
+const REVIEWED_IMPLEMENTATION_ACTOR = /^\s*implementation actor reviewed\s*:\s*(.+?)\s*$/i;
 /** Declared by the implementing agent in the PR body, so self-review can be recognised. */
 const IMPLEMENTATION_ACTOR = /^\s*implementation actor\s*:\s*(.+?)\s*$/im;
 
@@ -66,6 +68,16 @@ export interface CommentVerdict {
    * declare one — in which case the verdict is evidence, never gate-clearing.
    */
   actor?: string;
+  /**
+   * The implementation actor **as the reviewer recorded it**, inside the verdict.
+   *
+   * The PR body is editable and the head does not move when it changes, so comparing a verdict
+   * against the body's *current* declaration would let a self-review be turned into an
+   * independent one afterwards: post a non-clearing verdict, then edit the body to name a
+   * different implementer, and the old comment silently becomes gate-clearing. Capturing the
+   * pair inside the artifact makes the comparison as immutable as the verdict it belongs to.
+   */
+  reviewedImplementationActor?: string;
 }
 
 /**
@@ -101,6 +113,7 @@ export function parseCommentVerdict(body: string): CommentVerdict | undefined {
   // Fields belong to their own marker, so two verdict blocks in one comment cannot cross-wire.
   let head: string | undefined;
   let actor: string | undefined;
+  let reviewedImplementationActor: string | undefined;
 
   for (const raw of lines.slice(markerIndex + 1)) {
     const line = deemphasize(raw);
@@ -116,6 +129,15 @@ export function parseCommentVerdict(body: string): CommentVerdict | undefined {
       continue;
     }
 
+    // Checked before `ACTOR`: "Implementation actor reviewed" does not contain "Review actor",
+    // but keeping the more specific field first makes that independent of the patterns' shapes.
+    const reviewedMatch = REVIEWED_IMPLEMENTATION_ACTOR.exec(line);
+    if (reviewedMatch && reviewedImplementationActor === undefined) {
+      const candidate = reviewedMatch[1]!.trim();
+      if (candidate !== "") reviewedImplementationActor = candidate;
+      continue;
+    }
+
     const actorMatch = ACTOR.exec(line);
     if (actorMatch && actor === undefined) {
       const candidate = actorMatch[1]!.trim();
@@ -123,7 +145,9 @@ export function parseCommentVerdict(body: string): CommentVerdict | undefined {
     }
   }
 
-  return head === undefined ? undefined : { verdict, reviewedHead: head, actor };
+  return head === undefined
+    ? undefined
+    : { verdict, reviewedHead: head, actor, reviewedImplementationActor };
 }
 
 /**
@@ -146,6 +170,16 @@ export function implementationActor(body: string | undefined): string | undefine
 export interface CommentPosition extends CommentVerdict {
   author: string;
   at: string;
+  /**
+   * The comment has been edited since it was posted.
+   *
+   * A comment is editable in place, so an approval can be written *after* the fact — a
+   * `Changes required` rewritten to `Approved`, a head or an actor swapped — while the commit it
+   * names stays fixed. An edited comment is therefore never gate-clearing. It still closes the
+   * gate when it objects: refusing to open on doubtful evidence and refusing to close on it are
+   * not symmetric, and only one of them is safe.
+   */
+  edited: boolean;
 }
 
 /**
@@ -159,7 +193,15 @@ export function commentVerdicts(comments: GitHubCommentObservation[] | undefined
   const positions: CommentPosition[] = [];
   for (const comment of comments ?? []) {
     const verdict = parseCommentVerdict(comment.body);
-    if (verdict) positions.push({ ...verdict, author: comment.author, at: comment.createdAt });
+    if (verdict) {
+      positions.push({
+        ...verdict,
+        author: comment.author,
+        at: comment.createdAt,
+        // GitHub sets updatedAt == createdAt on a comment that has never been edited.
+        edited: comment.updatedAt !== undefined && comment.updatedAt !== comment.createdAt,
+      });
+    }
   }
   return positions.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
 }

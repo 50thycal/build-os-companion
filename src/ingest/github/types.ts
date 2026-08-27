@@ -32,6 +32,15 @@ export interface GitHubCommentObservation {
   author: string;
   body: string;
   createdAt: string;
+  /**
+   * When the comment was last edited. Equal to `createdAt` on a comment nobody has touched.
+   *
+   * Load-bearing rather than informational: a comment is mutable, so a verdict can be rewritten
+   * after the fact while the commit it names stays fixed. Absent on an observation captured
+   * before this was read, which is treated as unedited — the conservative reading for old data,
+   * since the alternative is retroactively voiding evidence that was probably fine.
+   */
+  updatedAt?: string;
   htmlUrl: string;
 }
 

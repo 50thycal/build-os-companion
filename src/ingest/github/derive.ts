@@ -77,9 +77,11 @@ function positionKey(position: Position): string {
   return position.actor ?? position.author;
 }
 
-function activePositions(pr: GitHubPullRequestObservation): Position[] {
+function activePositions(pr: GitHubPullRequestObservation): { positions: Position[]; mutations: string[] } {
   const latestByReviewer = new Map<string, Position>();
   const implementedBy = implementationActor(pr.body);
+  /** Evidence that changed after the fact. Reported; never silently resolved. */
+  const mutations: string[] = [];
 
   const consider = (position: Position): void => {
     const key = positionKey(position);
@@ -116,17 +118,46 @@ function activePositions(pr: GitHubPullRequestObservation): Position[] {
    */
   for (const position of commentVerdicts(pr.comments)) {
     /**
-     * Independence is established by the record or not at all.
+     * Independence is established by the record, immutably, or not at all.
      *
-     * A comment verdict opens the gate only when it names an actor *and* the PR names the actor
-     * that implemented it *and* the two differ. Anything less is a verdict on the record whose
-     * independence is unknown, and unknown independence must not read as approved: this form
-     * exists because GitHub identity is transport here, so the tool has nothing else to go on.
+     * A comment verdict opens the gate only when it names an actor, names the implementation
+     * actor **inside itself**, and the two differ. The pair has to travel in the artifact: the
+     * PR body is editable and its head does not move when it changes, so comparing against the
+     * body's *current* declaration would let a self-review become independent after the fact —
+     * post a non-clearing verdict, edit the body to name a different implementer, and the old
+     * comment silently starts clearing the gate.
      */
+    const reviewed = position.reviewedImplementationActor;
     const independent =
       position.actor !== undefined &&
+      reviewed !== undefined &&
+      position.actor.toLowerCase() !== reviewed.toLowerCase();
+
+    /**
+     * The body is still worth reading — as a cross-check, never as the authority.
+     *
+     * Where the verdict's captured implementer and the PR's current declaration disagree, one of
+     * them changed after the review. Which one is not knowable from here, so this fails closed
+     * and reports rather than picking a side.
+     */
+    const contradicted =
+      reviewed !== undefined &&
       implementedBy !== undefined &&
-      position.actor.toLowerCase() !== implementedBy.toLowerCase();
+      reviewed.toLowerCase() !== implementedBy.toLowerCase();
+
+    if (contradicted) {
+      mutations.push(
+        `A verdict by ${position.actor ?? position.author} reviewed implementation actor ` +
+          `"${reviewed}", but this pull request now declares "${implementedBy}". One of them ` +
+          `changed after the review; the verdict does not clear the gate.`,
+      );
+    }
+    if (position.edited && isApprovingVerdict(position.verdict)) {
+      mutations.push(
+        `An approving verdict by ${position.actor ?? position.author} was edited after it was ` +
+          `posted, so it cannot be evidence of what was approved. Post a new comment instead.`,
+      );
+    }
 
     consider({
       author: position.author,
@@ -135,11 +166,24 @@ function activePositions(pr: GitHubPullRequestObservation): Position[] {
       approving: isApprovingVerdict(position.verdict),
       changesRequested: position.verdict === "CHANGES_REQUIRED",
       head: position.reviewedHead,
-      gateClearing: independent,
+      // An edited comment never opens the gate: the verdict can be rewritten while the commit it
+      // names stays fixed. It still closes one, below — refusing to open on doubtful evidence and
+      // refusing to close on it are not symmetric, and only one of them is safe.
+      gateClearing: independent && !contradicted && !position.edited,
     });
   }
 
-  return [...latestByReviewer.values()];
+  return { positions: [...latestByReviewer.values()], mutations };
+}
+
+/**
+ * Verdict evidence on this PR that was altered after it was given.
+ *
+ * Surfaced rather than swallowed: the whole point of binding a verdict to a commit is that it
+ * cannot move, so evidence that did move is a fact about the record the owner should see.
+ */
+export function deriveVerdictIntegrityWarnings(pr: GitHubPullRequestObservation): string[] {
+  return activePositions(pr).mutations;
 }
 
 /**
@@ -151,7 +195,7 @@ function activePositions(pr: GitHubPullRequestObservation): Position[] {
  */
 export function deriveApprovedHeadShas(pr: GitHubPullRequestObservation): string[] {
   const shas = new Set<string>();
-  for (const position of activePositions(pr)) {
+  for (const position of activePositions(pr).positions) {
     if (!position.approving || !position.gateClearing) continue;
     if (position.head) shas.add(position.head.toLowerCase());
   }
@@ -169,7 +213,7 @@ export function deriveChangesRequestedBy(pr: GitHubPullRequestObservation): stri
   // objections, and naming the login twice would hide that. An objection counts whether or not
   // it could have cleared the gate — closing it is always the safe direction.
   return activePositions(pr)
-    .filter((position) => position.changesRequested)
+    .positions.filter((position) => position.changesRequested)
     .map((position) => position.actor ?? position.author)
     .sort();
 }
@@ -259,6 +303,7 @@ export function derivePullRequestState(
     requestedReviewers: [...pr.requestedReviewers],
     approvedHeadShas: deriveApprovedHeadShas(pr),
     changesRequestedBy: deriveChangesRequestedBy(pr),
+    mutatedEvidence: deriveVerdictIntegrityWarnings(pr),
     // Populated by the Build OS layer, which is the only thing that knows about workstreams.
     workstreamIds: [],
     sourceUrl: pr.htmlUrl,

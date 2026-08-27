@@ -373,6 +373,7 @@ interface RawComment {
   user?: { login?: string };
   body?: string;
   created_at: string;
+  updated_at?: string;
   html_url: string;
 }
 
@@ -419,6 +420,7 @@ function toObservation(
         author: c.user?.login ?? "unknown",
         body: c.body ?? "",
         createdAt: c.created_at,
+        updatedAt: c.updated_at,
         htmlUrl: c.html_url,
       }))
     : undefined;

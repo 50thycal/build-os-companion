@@ -82,6 +82,7 @@ function pullRequest(overrides: Partial<PullRequestState> = {}): PullRequestStat
     requestedReviewers: [],
     approvedHeadShas: [],
     changesRequestedBy: [],
+    mutatedEvidence: [],
     workstreamIds: ["WS-011"],
     sourceUrl: "https://github.com/50thycal/cargo-ship/pull/84",
     source: PR_SOURCE,
@@ -180,7 +181,10 @@ describe("merge finalization — the head a commit cannot name", () => {
           author: "50thycal",
           body:
             `Build OS review verdict: Approved\nReviewed head: ${FINAL_HEAD}\n` +
-            "Review actor: chatgpt-independent-session",
+            "Review actor: chatgpt-independent-session\n" +
+            // Captured inside the verdict, so a later edit to the PR body cannot change whether
+            // this approval was independent.
+            "Implementation actor reviewed: claude-implementation-session",
           createdAt: "2026-08-23T17:30:00Z",
           htmlUrl: "https://github.com/50thycal/cargo-ship/pull/84#issuecomment-1",
         },

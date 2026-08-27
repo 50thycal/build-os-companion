@@ -17,6 +17,7 @@ import {
   implementationActor,
   parseCommentVerdict,
 } from "../src/ingest/github/comment-verdict.ts";
+import { deriveVerdictIntegrityWarnings } from "../src/ingest/github/derive.ts";
 import { deriveApprovedHeadShas, deriveChangesRequestedBy } from "../src/ingest/github/derive.ts";
 import type {
   GitHubCommentObservation,
@@ -36,7 +37,8 @@ const APPROVAL = `Looks right to me.
 
 Build OS review verdict: Approved
 Reviewed head: ${HEAD}
-Review actor: ${REVIEWER}`;
+Review actor: ${REVIEWER}
+Implementation actor reviewed: ${IMPLEMENTER}`;
 
 /** The same approval with no actor named — a verdict on the record, but not gate-clearing. */
 const ANONYMOUS_APPROVAL = `Build OS review verdict: Approved\nReviewed head: ${HEAD}`;
@@ -81,6 +83,7 @@ describe("what counts as a verdict", () => {
       verdict: "APPROVED",
       reviewedHead: HEAD,
       actor: REVIEWER,
+      reviewedImplementationActor: IMPLEMENTER,
     });
   });
 
@@ -262,7 +265,8 @@ describe("one GitHub account, several actors", () => {
    * supersede an independent reviewer's for no reason but sharing a pipe.
    */
   const verdict = (v: string, actor: string) =>
-    `Build OS review verdict: ${v}\nReviewed head: ${HEAD}\nReview actor: ${actor}`;
+    `Build OS review verdict: ${v}\nReviewed head: ${HEAD}\nReview actor: ${actor}\n` +
+    `Implementation actor reviewed: ${IMPLEMENTER}`;
 
   it("does not let one actor's later verdict overwrite another's", () => {
     const observation = pr({
@@ -340,11 +344,22 @@ describe("independence is established by the record or not at all", () => {
     expect(deriveApprovedHeadShas(observation)).toEqual([]);
   });
 
-  it("does not clear the gate when the PR never says who implemented it", () => {
-    // Unknown independence must not read as approved. An implementing agent that declines to
-    // name itself would otherwise make every verdict trivially independent.
-    const observation = pr({ body: "# Implementation Handoff\n\nNo actor named.\n", comments: [comment()] });
-    expect(deriveApprovedHeadShas(observation)).toEqual([]);
+  it("does not clear the gate when the verdict omits the implementation actor it reviewed", () => {
+    // Unknown independence must not read as approved. The pair has to be *in the artifact*: a
+    // verdict that names only its own actor cannot say who it believed it was reviewing.
+    const body = `Build OS review verdict: Approved\nReviewed head: ${HEAD}\nReview actor: ${REVIEWER}`;
+    expect(parseCommentVerdict(body)?.reviewedImplementationActor).toBeUndefined();
+    expect(deriveApprovedHeadShas(pr({ comments: [comment({ body })] }))).toEqual([]);
+  });
+
+  it("clears on the verdict's own pair even when the PR body declares nothing", () => {
+    // The body is a cross-check, not the authority — precisely because it is editable after the
+    // fact. A complete pair inside the verdict is what the gate rests on.
+    const observation = pr({
+      body: "# Implementation Handoff\n\nNo actor named.\n",
+      comments: [comment()],
+    });
+    expect(deriveApprovedHeadShas(observation)).toEqual([HEAD]);
   });
 
   it("still closes the gate on an objection from an actor that could not open it", () => {
@@ -364,5 +379,81 @@ describe("independence is established by the record or not at all", () => {
     expect(implementationActor("> Implementation actor: quoted")).toBeUndefined();
     expect(implementationActor("```\nImplementation actor: fenced\n```")).toBeUndefined();
     expect(implementationActor(undefined)).toBeUndefined();
+  });
+});
+
+describe("evidence that moved after it was given", () => {
+  /**
+   * The gate's premise is that a verdict is a statement about one commit, fixed when it was
+   * made. But a comment is editable and the PR body is editable, so evidence *can* move while
+   * the commit it names stays put — and an approval could be written after the fact.
+   */
+  const approval = (actor = REVIEWER, implementer = IMPLEMENTER) =>
+    `Build OS review verdict: Approved\nReviewed head: ${HEAD}\nReview actor: ${actor}\n` +
+    `Implementation actor reviewed: ${implementer}`;
+
+  const edited = (body: string): GitHubCommentObservation =>
+    comment({ body, createdAt: "2026-08-25T12:00:00Z", updatedAt: "2026-08-27T09:00:00Z" });
+
+  it("refuses an approving comment that was edited after posting", () => {
+    const observation = pr({ comments: [edited(approval())] });
+    expect(deriveApprovedHeadShas(observation)).toEqual([]);
+  });
+
+  it("says why, rather than going quiet about it", () => {
+    const warnings = deriveVerdictIntegrityWarnings(pr({ comments: [edited(approval())] }));
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("edited");
+    expect(warnings[0]).toContain(REVIEWER);
+  });
+
+  it("still closes the gate on an edited objection", () => {
+    // Refusing to open on doubtful evidence and refusing to close on it are not symmetric.
+    // An objection someone tampered with is still an objection on the record.
+    const body =
+      `Build OS review verdict: Changes required\nReviewed head: ${HEAD}\n` +
+      `Review actor: ${REVIEWER}\nImplementation actor reviewed: ${IMPLEMENTER}`;
+    expect(deriveChangesRequestedBy(pr({ comments: [edited(body)] }))).toEqual([REVIEWER]);
+  });
+
+  it("does not fault an unedited comment, or one from before edits were read", () => {
+    expect(deriveVerdictIntegrityWarnings(pr({ comments: [comment()] }))).toEqual([]);
+    // `updatedAt` absent — an observation captured before this field was read. Treated as
+    // unedited rather than retroactively voiding evidence that was probably fine.
+    const legacy = comment({ body: approval(), updatedAt: undefined });
+    expect(deriveApprovedHeadShas(pr({ comments: [legacy] }))).toEqual([HEAD]);
+  });
+
+  it("does not let a later PR-body edit turn a self-review into an independent one", () => {
+    // The attack the immutable pair exists to stop: a verdict where reviewer and implementer are
+    // the same is non-clearing, and editing the body afterwards must not change that.
+    const selfReview = comment({ body: approval(IMPLEMENTER, IMPLEMENTER) });
+    const rewritten = pr({
+      body: "# Implementation Handoff\n\nImplementation actor: someone-else\n",
+      comments: [selfReview],
+    });
+    expect(deriveApprovedHeadShas(rewritten)).toEqual([]);
+  });
+
+  it("fails closed when the body contradicts what the verdict says it reviewed", () => {
+    const observation = pr({
+      body: "# Implementation Handoff\n\nImplementation actor: someone-else\n",
+      comments: [comment()],
+    });
+    expect(deriveApprovedHeadShas(observation)).toEqual([]);
+
+    const warnings = deriveVerdictIntegrityWarnings(observation);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain(IMPLEMENTER);
+    expect(warnings[0]).toContain("someone-else");
+  });
+
+  it("keeps a verdict clearing when the body agrees, whatever its case", () => {
+    const observation = pr({
+      body: `# Implementation Handoff\n\nImplementation actor: ${IMPLEMENTER.toUpperCase()}\n`,
+      comments: [comment()],
+    });
+    expect(deriveVerdictIntegrityWarnings(observation)).toEqual([]);
+    expect(deriveApprovedHeadShas(observation)).toEqual([HEAD]);
   });
 });
