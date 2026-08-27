@@ -44,7 +44,7 @@ function fetchWith(deny: Record<string, number>): typeof fetch {
       ? { default_branch: "main" }
       : parsed.pathname.endsWith("/pulls")
         ? [PR]
-        : path.includes("/reviews")
+        : path.includes("/reviews") || path.includes("/comments")
           ? []
           : path.includes("/check-runs")
             ? { check_runs: [{ id: 1, name: "build", status: "completed", conclusion: "failure", started_at: "2026-08-24T11:00:00Z", completed_at: "2026-08-24T11:10:00Z" }] }
@@ -127,6 +127,28 @@ describe("a token without either CI permission", () => {
     } finally {
       warn.mockRestore();
     }
+  });
+});
+
+describe("a token without the Issues permission", () => {
+  // Pull request comments are read through the same best-effort path, and for the same reason:
+  // they carry the verdicts the merge gate depends on, but losing every workstream in the
+  // repository because that one read was denied is the same bad trade.
+  it("still syncs, and says it did not read the comments", async () => {
+    const observation = await observe({ "/comments": 403 });
+    expect(observation.pullRequests).toHaveLength(1);
+    // `undefined`, not `[]` — "not read" and "read, and there were none" are different claims,
+    // and only one of them means a comment verdict could be sitting there unseen.
+    expect(observation.pullRequests[0]!.comments).toBeUndefined();
+  });
+
+  it("tolerates 404 the same way as 403", async () => {
+    const observation = await observe({ "/comments": 404 });
+    expect(observation.pullRequests[0]!.comments).toBeUndefined();
+  });
+
+  it("propagates a bad token rather than pretending there were no verdicts", async () => {
+    await expect(observe({ "/comments": 401 })).rejects.toThrow(/401/);
   });
 });
 

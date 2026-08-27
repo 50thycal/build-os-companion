@@ -2,6 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import { checkReviewGate } from "../src/projection/review-gate.ts";
 import { reconcileBuildOsState } from "../src/ingest/buildos/reconcile.ts";
+import {
+  deriveApprovedHeadShas,
+  deriveChangesRequestedBy,
+} from "../src/ingest/github/derive.ts";
+import type { GitHubPullRequestObservation } from "../src/ingest/github/types.ts";
 import type {
   IntegrityWarning,
   PullRequestState,
@@ -77,6 +82,7 @@ function pullRequest(overrides: Partial<PullRequestState> = {}): PullRequestStat
     requestedReviewers: [],
     approvedHeadShas: [],
     changesRequestedBy: [],
+    mutatedEvidence: [],
     workstreamIds: ["WS-011"],
     sourceUrl: "https://github.com/50thycal/cargo-ship/pull/84",
     source: PR_SOURCE,
@@ -139,6 +145,60 @@ describe("merge finalization — the head a commit cannot name", () => {
 
   it("goes quiet once a current approving review names the final head", () => {
     const pr = pullRequest({ headSha: FINAL_HEAD, approvedHeadShas: [APPROVED_HEAD, FINAL_HEAD] });
+    expect(checkReviewGate([finalized()], [pr])).toEqual([]);
+  });
+
+  it("clears on a comment-borne verdict, where GitHub allowed no review at all", () => {
+    /**
+     * The case this project hit twice on its own PRs: GitHub refuses a review on a PR you
+     * authored, so a single-account repository can never produce `approvedHeadShas` from
+     * reviews, and the final head is unverifiable forever. The verdict was written — as a
+     * comment. Derived here from the observation rather than hand-set, so the test fails if the
+     * comment reader and the gate stop agreeing.
+     */
+    const observation: GitHubPullRequestObservation = {
+      number: 84,
+      title: "Region-aware simulation",
+      state: "closed",
+      draft: false,
+      merged: true,
+      createdAt: "2026-08-21T09:00:00Z",
+      updatedAt: "2026-08-23T18:00:00Z",
+      headRef: "claude/regions",
+      headSha: FINAL_HEAD,
+      baseRef: "main",
+      author: "50thycal",
+      authorIsBot: false,
+      htmlUrl: "https://github.com/50thycal/cargo-ship/pull/84",
+      // The handoff names who implemented it, so the reviewer's actor can be compared against it.
+      // Both are relayed by the same login; only the declared actors tell them apart.
+      body: "# Implementation Handoff\n\nImplementation actor: claude-implementation-session\n",
+      requestedReviewers: [],
+      reviews: [],
+      comments: [
+        {
+          id: 1,
+          author: "50thycal",
+          body:
+            `Build OS review verdict: Approved\nReviewed head: ${FINAL_HEAD}\n` +
+            "Review actor: chatgpt-independent-session\n" +
+            // Captured inside the verdict, so a later edit to the PR body cannot change whether
+            // this approval was independent.
+            "Implementation actor reviewed: claude-implementation-session",
+          createdAt: "2026-08-23T17:30:00Z",
+          htmlUrl: "https://github.com/50thycal/cargo-ship/pull/84#issuecomment-1",
+        },
+      ],
+      checks: [],
+    };
+
+    expect(deriveApprovedHeadShas(observation)).toEqual([FINAL_HEAD]);
+
+    const pr = pullRequest({
+      headSha: FINAL_HEAD,
+      approvedHeadShas: deriveApprovedHeadShas(observation),
+      changesRequestedBy: deriveChangesRequestedBy(observation),
+    });
     expect(checkReviewGate([finalized()], [pr])).toEqual([]);
   });
 

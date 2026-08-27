@@ -9,6 +9,7 @@
 import type { BuildOsPaths } from "../../domain/state.ts";
 import type {
   GitHubCheckObservation,
+  GitHubCommentObservation,
   GitHubObservation,
   GitHubPullRequestObservation,
   GitHubReviewObservation,
@@ -151,7 +152,7 @@ export class HttpGitHubClient implements GitHubPort {
   }
 
   /**
-   * Read one of the two CI surfaces, tolerating the token not being allowed to.
+   * Read an optional surface, tolerating the token not being allowed to.
    *
    * Both CI endpoints need a permission of their own — `Checks` for check runs, `Commit statuses`
    * for the older status API — and a fine-grained token can perfectly reasonably be issued
@@ -165,8 +166,20 @@ export class HttpGitHubClient implements GitHubPort {
    * reported" — a phrase that is true either way and never claims a green build. Anything else,
    * including 401 on a bad token and 5xx, still propagates: those are real failures and the
    * owner should see the repository marked stale rather than quietly missing CI.
+   *
+   * Pull request comments are read the same way and for the same reason — the verdicts the merge
+   * gate depends on live there, but losing every workstream because that one read was denied
+   * would be the same bad trade. Their `empty` is `undefined` rather than `[]`, because "not
+   * read" and "read, and there were none" are different claims downstream.
    */
-  async #readCiSurface<T>(path: string, surface: string, empty: T): Promise<T> {
+  async #readOptionalSurface<T>(
+    path: string,
+    surface: string,
+    empty: T,
+    /** What the owner loses while the permission is missing. Named per surface, because a
+        warning that describes the wrong consequence is worse than none. */
+    consequence = 'CI will show as "no checks reported" for this repository',
+  ): Promise<T> {
     try {
       return await this.#get<T>(path);
     } catch (error) {
@@ -176,9 +189,8 @@ export class HttpGitHubClient implements GitHubPort {
         if (!this.#warnedSurfaces.has(surface)) {
           this.#warnedSurfaces.add(surface);
           console.warn(
-            `[companion] cannot read ${surface} (HTTP ${error.statusCode}). CI will show as ` +
-              `"no checks reported" for this repository. Grant the token read access to ${surface} ` +
-              `if you want CI state.`,
+            `[companion] cannot read ${surface} (HTTP ${error.statusCode}). ${consequence}. ` +
+              `Grant the token read access to ${surface} to change that.`,
           );
         }
         return empty;
@@ -193,7 +205,7 @@ export class HttpGitHubClient implements GitHubPort {
    * A missing or empty combined status is a normal answer, not a failure.
    */
   async #commitStatuses(repositoryFullName: string, sha: string): Promise<RawCommitStatus[]> {
-    const combined = await this.#readCiSurface<RawCombinedStatus>(
+    const combined = await this.#readOptionalSurface<RawCombinedStatus>(
       `/repos/${repositoryFullName}/commits/${sha}/status`,
       "Commit statuses",
       { state: "pending", total_count: 0, statuses: [] },
@@ -228,8 +240,26 @@ export class HttpGitHubClient implements GitHubPort {
         { id: number; user?: { login?: string }; state: string; submitted_at?: string; html_url: string }[]
       >(`/repos/${repositoryFullName}/pulls/${summary.number}/reviews`);
 
+      /**
+       * Issue comments, for verdicts GitHub would not let the reviewer file as a review.
+       * One extra request per PR per cycle, which is the price of the gate working at all in a
+       * single-account repository. See `comment-verdict.ts`.
+       *
+       * Alone among these calls it is additive rather than load-bearing, so its failure must not
+       * sink the poll: everything else here decides whether the PR is seen at all. Left
+       * `undefined` rather than `[]` on failure, because those mean different things — "not
+       * read" must not read downstream as "read, and there were none".
+       */
+      const comments = await this.#readOptionalSurface<RawComment[] | undefined>(
+        `/repos/${repositoryFullName}/issues/${summary.number}/comments`,
+        "Issues",
+        undefined,
+        "review verdicts left as PR comments will not be read, so an approved PR may still " +
+          "report as unapproved",
+      );
+
       // Both halves of GitHub's CI surface. A repository may use either, both, or neither.
-      const checks = await this.#readCiSurface<{
+      const checks = await this.#readOptionalSurface<{
         check_runs: {
           id: number;
           name: string;
@@ -245,7 +275,7 @@ export class HttpGitHubClient implements GitHubPort {
       const statuses = await this.#commitStatuses(repositoryFullName, detail.head.sha);
 
       pullRequests.push(
-        toObservation(detail, reviews, checks.check_runs, statuses, repositoryFullName),
+        toObservation(detail, reviews, comments, checks.check_runs, statuses, repositoryFullName),
       );
     }
 
@@ -338,6 +368,15 @@ export function isBotAuthor(login: string, type?: string): boolean {
   return type === "Bot" || /\[bot\]$/i.test(login);
 }
 
+interface RawComment {
+  id: number;
+  user?: { login?: string };
+  body?: string;
+  created_at: string;
+  updated_at?: string;
+  html_url: string;
+}
+
 function toObservation(
   pr: RawPull,
   reviews: {
@@ -348,6 +387,7 @@ function toObservation(
     html_url: string;
     commit_id?: string;
   }[],
+  comments: RawComment[] | undefined,
   checkRuns: {
     id: number;
     name: string;
@@ -370,6 +410,20 @@ function toObservation(
       htmlUrl: r.html_url,
       commitId: r.commit_id,
     }));
+
+  // Array-checked, not just presence-checked: an endpoint that answers with an error object
+  // carrying a 200, or a payload shape that changes, must degrade to "not read" like any other
+  // failure rather than throw inside the mapper and take the whole poll down with it.
+  const mappedComments: GitHubCommentObservation[] | undefined = Array.isArray(comments)
+    ? comments.map((c) => ({
+        id: c.id,
+        author: c.user?.login ?? "unknown",
+        body: c.body ?? "",
+        createdAt: c.created_at,
+        updatedAt: c.updated_at,
+        htmlUrl: c.html_url,
+      }))
+    : undefined;
 
   const htmlUrl = pr.html_url ?? `https://github.com/${repositoryFullName}/pull/${pr.number}`;
 
@@ -411,6 +465,7 @@ function toObservation(
     mergeableState: pr.mergeable_state,
     requestedReviewers: (pr.requested_reviewers ?? []).map((r) => r.login),
     reviews: mappedReviews,
+    comments: mappedComments,
     checks: mappedChecks,
   };
 }

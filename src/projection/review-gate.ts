@@ -154,6 +154,22 @@ export function checkReviewGate(
       .filter((pr): pr is PullRequestState => pr !== undefined);
 
     for (const pr of linked) {
+      /**
+       * Mutated evidence is reported for every linked PR, gated or not.
+       *
+       * It is a fact about the record rather than a judgement about this workstream's process:
+       * a verdict was altered after it was given. That is worth seeing even on a PR the gate
+       * otherwise makes no claim about.
+       */
+      for (const detail of pr.mutatedEvidence) {
+        warnings.push({
+          code: "REVIEW_EVIDENCE_MUTATED",
+          workstreamId: ws.workstreamId,
+          message: `PR #${pr.number}: ${detail}`,
+          sources: [pr.source],
+        });
+      }
+
       const record = reviewRecordFor(ws.reviewRecords, pr.number);
       if (record) {
         warnings.push(...checkRecord(ws, pr, record));

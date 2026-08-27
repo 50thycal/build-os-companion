@@ -47,6 +47,7 @@ function pullRequest(overrides: Partial<PullRequestState> = {}): PullRequestStat
     requestedReviewers: [],
     approvedHeadShas: [],
     changesRequestedBy: [],
+    mutatedEvidence: [],
     workstreamIds: [],
     sourceUrl: SOURCE.sourceUrl!,
     source: SOURCE,

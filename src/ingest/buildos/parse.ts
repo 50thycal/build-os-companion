@@ -166,7 +166,7 @@ export interface ParsedReviewState {
   reviewedHeadMalformed: boolean;
 }
 
-function normalizeVerdict(text: string): ReviewVerdict | undefined {
+export function normalizeVerdict(text: string): ReviewVerdict | undefined {
   const normalized = text
     .trim()
     .toUpperCase()

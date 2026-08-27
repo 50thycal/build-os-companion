@@ -82,6 +82,16 @@ export interface PullRequestState {
    * closed — one reviewer's approval never cancels another's outstanding objection.
    */
   changesRequestedBy: string[];
+  /**
+   * Verdict evidence on this PR that was altered after it was given.
+   *
+   * A verdict is supposed to be a statement about one commit, fixed at the moment it was made.
+   * A pull request comment is editable and the PR body is editable, so evidence *can* move
+   * while the commit it names stays put. Where that happened it is recorded here and the
+   * evidence stops clearing the gate — reported rather than resolved, because which side
+   * changed is not knowable from the outside.
+   */
+  mutatedEvidence: string[];
   /** Many-to-many: a PR may serve several workstreams. Never collapse this to one field. */
   workstreamIds: string[];
   summary?: string;
@@ -312,7 +322,8 @@ export type IntegrityCode =
   | "MERGED_WITHOUT_APPROVAL"
   | "WORKSTREAM_PR_STATE_MISMATCH"
   | "FINAL_HEAD_UNVERIFIED"
-  | "REVIEW_RECORD_MISSING";
+  | "REVIEW_RECORD_MISSING"
+  | "REVIEW_EVIDENCE_MUTATED";
 
 /**
  * A problem with the *project's* Build OS records, addressed to its owner. Not a parser error:
