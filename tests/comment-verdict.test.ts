@@ -344,6 +344,16 @@ describe("independence is established by the record or not at all", () => {
     expect(deriveApprovedHeadShas(observation)).toEqual([]);
   });
 
+  it("still closes the gate on an objection that names no actor at all", () => {
+    // The protocol's two thresholds: marker plus a full head makes it a verdict; all four lines
+    // make it gate-clearing. Between those sits an incomplete objection, and discarding it would
+    // be the unsafe direction — the reporter is reported by their transport login.
+    const body = `Build OS review verdict: Changes required\nReviewed head: ${HEAD}`;
+    const observation = pr({ comments: [comment({ author: "50thycal", body })] });
+    expect(deriveChangesRequestedBy(observation)).toEqual(["50thycal"]);
+    expect(deriveApprovedHeadShas(observation)).toEqual([]);
+  });
+
   it("does not clear the gate when the verdict omits the implementation actor it reviewed", () => {
     // Unknown independence must not read as approved. The pair has to be *in the artifact*: a
     // verdict that names only its own actor cannot say who it believed it was reviewing.
