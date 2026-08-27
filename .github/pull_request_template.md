@@ -92,6 +92,12 @@ login. It is what lets a comment verdict be recognised as self-review rather tha
 approval. Omitting it does not make a review look independent; it makes every comment verdict
 non-gate-clearing, because independence can no longer be established either way.
 
+**Re-state the head on every push.** `Head at time of writing` is not written once: it is
+updated in the same act as pushing, every time, or the handoff quietly starts describing code
+that is no longer there. This is the same failure as a verdict drifting from its commit — slower,
+easier to forgive, and just as capable of sending a reviewer at the wrong diff. A reviewer who
+opens a PR should be able to trust that its body describes the head they are about to read.
+
 Once reviewed, repeat the verdict and the full 40-character head it was reached against:
 
     Review gate: Approved · reviewed head <40-char SHA>
