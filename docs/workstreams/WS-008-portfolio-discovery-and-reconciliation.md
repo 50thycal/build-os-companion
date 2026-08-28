@@ -1,7 +1,7 @@
 # WS-008 — Real-portfolio discovery and reconciliation truth
 
-**Phase:** BUILDING
-**Status:** Active
+**Phase:** COMPLETE
+**Status:** Complete
 **Created:** 2026-08-28
 **Updated:** 2026-08-28
 **Build OS:** v0.5
@@ -167,12 +167,33 @@ Recorded rather than built, so this pull request stays reviewable.
 
 ## Implementation State
 
-Building. Implementation PR: [#10](https://github.com/50thycal/build-os-companion/pull/10),
-open and awaiting independent review. The durable handoff is the PR body.
+Merged. Implementation PR: [#10](https://github.com/50thycal/build-os-companion/pull/10), merged
+2026-08-28 as `6c20df0`. The durable handoff is the PR body.
 
 ## Review State
 
-**Verdict:** Not started
-**Reviewed head:** —
+**Verdict:** Approved
+**Reviewed head:** `d414b7880f2d1241971e5ee87bfa062dd4e6949b`
 **Reviewed PR:** [#10](https://github.com/50thycal/build-os-companion/pull/10)
-**Finalization:** —
+**Review actor:** 50thycal (owner)
+**Implementation actor reviewed:** claude-code-implementation (Build OS Companion dogfood pass, WS-008)
+**Finalization:** Recorded after merge; the owner's merge is the verdict (`CLAUDE.md`).
+
+No verdict comment was posted. Under the standing rule in `CLAUDE.md` the owner's merge *is* the
+approval, and the reviewed head is the merge commit's second parent — the pull request head, not
+the base branch it landed on.
+
+## Why this closes here
+
+The goal was the implementation, and it is merged and approved. One acceptance item is still
+outstanding — running discovery against the owner's live credentials to confirm the portfolio it
+actually finds — and that is deliberately **not** held open here.
+
+It belongs to **WS-002**, whose own acceptance criterion is already "the feed accurately represents
+my actual recent development portfolio". Holding a second workstream open for the same single run
+would be two rows waiting on one act, which is exactly the kind of bookkeeping this application
+exists to complain about.
+
+The run could not be performed from the build environment: the ambient credential is scoped to this
+one repository and cannot enumerate an account (`/user/repos` answers 403). That is a property of
+the sandbox, not of the code.
