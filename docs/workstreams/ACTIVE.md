@@ -37,7 +37,7 @@ Protocol contracts stay in build-os and are vendored under `contracts/`; see `co
 | [WS-005](WS-005-attention-engine-and-catch-up-briefing.md) | Attention engine + catch-up briefing | REVIEW | Active | Owner review of Needs Me and the fact pack against real use before prose rendering | [#1](https://github.com/50thycal/build-os-companion/pull/1) |
 | [WS-006](WS-006-podcast-renderer.md) | Podcast renderer | IDEA | Blocked | Blocked until the written fact pack proves accurate in real use against Party Games | — |
 | [WS-007](WS-007-owner-application.md) | Owner-facing application | REVIEW | Active | Owner uses the deployed app against Party Games during real Build OS work | [#1](https://github.com/50thycal/build-os-companion/pull/1) |
-| [WS-008](WS-008-portfolio-discovery-and-reconciliation.md) | Real-portfolio discovery and reconciliation truth | BUILDING | Active | Independent review of the dogfood implementation head | — |
+| [WS-008](WS-008-portfolio-discovery-and-reconciliation.md) | Real-portfolio discovery and reconciliation truth | BUILDING | Active | Independent review of the dogfood implementation head | [#10](https://github.com/50thycal/build-os-companion/pull/10) |
 
 <!-- Phase: IDEA · EXPLORE · MODEL · DECIDE · BUILD_CARD · READY_TO_BUILD · BUILDING · REVIEW
      Status: Active · Paused · Blocked · Abandoned

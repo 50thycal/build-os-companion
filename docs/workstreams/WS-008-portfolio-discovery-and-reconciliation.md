@@ -167,11 +167,12 @@ Recorded rather than built, so this pull request stays reviewable.
 
 ## Implementation State
 
-Building. Implementation PR: see Review State.
+Building. Implementation PR: [#10](https://github.com/50thycal/build-os-companion/pull/10),
+open and awaiting independent review. The durable handoff is the PR body.
 
 ## Review State
 
 **Verdict:** Not started
 **Reviewed head:** —
-**Reviewed PR:** —
+**Reviewed PR:** [#10](https://github.com/50thycal/build-os-companion/pull/10)
 **Finalization:** —
