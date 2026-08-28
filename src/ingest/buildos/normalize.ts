@@ -39,7 +39,12 @@ export function normalizeWorkstreams(
       drafts.push({
         ...base,
         eventType: "WORKSTREAM_CREATED",
-        summaryShort: `${ws.workstreamId} — ${ws.title}${ws.phase ? ` (${ws.phase})` : ""}`,
+        // Phrased as history, not as a claim about now. The phase in this sentence is the phase
+        // the workstream was in when the Companion first saw it, and an event is immutable — so
+        // a card rendering this text months later must not read as though that were still true.
+        // It said `WS-003 — … (READY_TO_BUILD)` beside a current state of `BUILDING`, and the
+        // owner had two phases on one card with nothing to say which was current.
+        summaryShort: `${ws.workstreamId} — ${ws.title}${ws.phase ? `, first seen in ${ws.phase}` : ""}`,
         summaryDetail: ws.goal,
         // Keyed on identity alone: a workstream is created once, however often it is re-read.
         fingerprintParts: [ws.workstreamId, "created"],

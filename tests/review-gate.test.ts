@@ -235,7 +235,9 @@ describe("MERGED_WITHOUT_APPROVAL", () => {
       reviewRecords: [record({ verdict: "IN_REVIEW", reviewedHead: undefined })],
     });
     const warnings = checkReviewGate([ws], [pullRequest({ lifecycle: "MERGED" })]);
-    expect(codes(warnings)).toEqual(["MERGED_WITHOUT_APPROVAL"]);
+    // Two true things about the same workstream: it merged without a verdict, and it still says
+    // BUILDING with nothing left open. State agreement is a separate check from the gate.
+    expect(codes(warnings)).toContain("MERGED_WITHOUT_APPROVAL");
     expect(warnings[0]!.message).toContain("IN_REVIEW");
   });
 
@@ -487,16 +489,24 @@ describe("adoption never reaches backwards", () => {
     expect(checkReviewGate([ws], [legacyPr()], { adoptedAt: ADOPTED })).toEqual([]);
   });
 
+  // The boundary silences the *gate*, not the state-agreement checks. A workstream that still
+  // says BUILDING while its only pull request has merged is behind whatever protocol version it
+  // ran under — that is an observation about two records disagreeing, not a demand for a verdict
+  // — and `CLAUDE.md` says in as many words that adoption "does not silence the state-agreement
+  // check". So these assert that no gate code fires, rather than that nothing at all is said.
+  const gateCodes = (warnings: IntegrityWarning[]) =>
+    codes(warnings).filter((code) => code !== "WORKSTREAM_STATE_BEHIND_GITHUB");
+
   it("says nothing about an active workstream last touched before adoption", () => {
     const ws = inherited({ phase: "BUILDING", updatedAt: "2026-08-01" });
-    expect(checkReviewGate([ws], [legacyPr()], { adoptedAt: ADOPTED })).toEqual([]);
+    expect(gateCodes(checkReviewGate([ws], [legacyPr()], { adoptedAt: ADOPTED }))).toEqual([]);
   });
 
   it("stays quiet on settled work when the project records no adoption date", () => {
     // Without a boundary there is no way to tell pre- from post-adoption, and the safe answer
     // for something already merged is silence.
     const ws = inherited({ phase: "BUILDING" });
-    expect(checkReviewGate([ws], [legacyPr()])).toEqual([]);
+    expect(gateCodes(checkReviewGate([ws], [legacyPr()]))).toEqual([]);
   });
 
   it("leaves an older merged PR alone while covering the current one", () => {

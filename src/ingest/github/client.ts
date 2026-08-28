@@ -7,6 +7,7 @@
  */
 
 import type { BuildOsPaths } from "../../domain/state.ts";
+import type { DiscoveryPort, OwnerActivity, RepositorySummary } from "./discovery.ts";
 import type {
   GitHubCheckObservation,
   GitHubCommentObservation,
@@ -29,10 +30,26 @@ export interface GitHubPort {
   readFile(repositoryFullName: string, path: string): Promise<RepositoryFile | undefined>;
 }
 
+/** A port that can also answer "which repositories?", not only "what happened in this one?". */
+export type DiscoveringGitHubPort = GitHubPort & DiscoveryPort;
+
+/** Whether this port can discover repositories, so a caller can degrade rather than throw. */
+export function canDiscover(port: GitHubPort): port is DiscoveringGitHubPort {
+  const candidate = port as Partial<DiscoveryPort>;
+  return typeof candidate.listRepositories === "function" && typeof candidate.ownerActivity === "function";
+}
+
 export interface ObserveOptions {
   /** Skip PRs untouched since this timestamp. The cursor that keeps polling cheap. */
   updatedSince?: string;
-  /** Cap on PRs pulled in one cycle. */
+  /**
+   * Cap on PRs pulled in one cycle.
+   *
+   * A *budget*, not a page size. Listing paginates until the window is exhausted or this many
+   * pull requests have been collected, because `per_page=30` on a single page silently truncated
+   * every repository with more than thirty touched pull requests — and a truncated portfolio
+   * looks exactly like a quiet one.
+   */
   limit?: number;
   /**
    * How many extra reads to spend resolving `mergeable_state: "unknown"` on an *open* PR.
@@ -70,6 +87,16 @@ interface RawCombinedStatus {
   state: string;
   total_count: number;
   statuses: RawCommitStatus[];
+}
+
+interface RawRepository {
+  full_name: string;
+  default_branch?: string;
+  pushed_at?: string | null;
+  private?: boolean;
+  fork?: boolean;
+  archived?: boolean;
+  description?: string | null;
 }
 
 interface RawPull {
@@ -200,6 +227,112 @@ export class HttpGitHubClient implements GitHubPort {
   }
 
   /**
+   * Walk a paginated collection to the end, or until `stop` says the rest is out of scope.
+   *
+   * GitHub answers a page at a time and every list endpoint this client uses is capable of
+   * having more than one. Reading page one and calling it the answer is how a portfolio becomes
+   * two repositories and a busy repository becomes thirty pull requests — a truncation that is
+   * indistinguishable, downstream, from the owner simply not having done anything.
+   *
+   * `stop` is given each page after it is collected and ends the walk when the endpoint is
+   * ordered such that nothing later can qualify. That is what keeps "everything in the window"
+   * from meaning "everything, ever".
+   */
+  async #getAllPages<T>(
+    path: string,
+    options: { perPage?: number; budget?: number; stop?: (page: T[]) => boolean } = {},
+  ): Promise<T[]> {
+    const perPage = options.perPage ?? 100;
+    const budget = options.budget ?? Number.POSITIVE_INFINITY;
+    const separator = path.includes("?") ? "&" : "?";
+    const collected: T[] = [];
+
+    for (let page = 1; ; page += 1) {
+      const batch = await this.#get<T[]>(`${path}${separator}per_page=${perPage}&page=${page}`);
+      if (!Array.isArray(batch) || batch.length === 0) break;
+      collected.push(...batch);
+      if (collected.length >= budget) break;
+      if (options.stop?.(batch)) break;
+      if (batch.length < perPage) break;
+    }
+
+    return budget === Number.POSITIVE_INFINITY ? collected : collected.slice(0, budget);
+  }
+
+  /**
+   * Every repository these credentials can read that was pushed to inside the window.
+   *
+   * `affiliation` is spelled out rather than left to the default so that organization
+   * repositories and repositories the owner only collaborates on are included; `visibility=all`
+   * is what admits private repositories, which the owner explicitly wants when the token can
+   * read them. Sorted by push time descending, so the first page whose last entry predates the
+   * window ends the walk.
+   */
+  async listRepositories(options: { pushedSince: string }): Promise<RepositorySummary[]> {
+    const raw = await this.#getAllPages<RawRepository>(
+      "/user/repos?visibility=all&affiliation=owner,collaborator,organization_member&sort=pushed&direction=desc",
+      {
+        stop: (page) => {
+          const last = page[page.length - 1];
+          return last?.pushed_at !== undefined && last.pushed_at !== null
+            ? last.pushed_at < options.pushedSince
+            : false;
+        },
+      },
+    );
+
+    return raw
+      .filter((repo) => (repo.pushed_at ?? "") >= options.pushedSince)
+      .map((repo) => ({
+        fullName: repo.full_name,
+        defaultBranch: repo.default_branch ?? "main",
+        pushedAt: repo.pushed_at ?? options.pushedSince,
+        private: repo.private ?? false,
+        fork: repo.fork ?? false,
+        archived: repo.archived ?? false,
+        description: repo.description ?? undefined,
+      }));
+  }
+
+  /**
+   * Owner-attributable activity in one repository since `since`.
+   *
+   * Two questions, asked cheaply — one page each, because only presence matters and the counts
+   * are reported as evidence rather than used as a threshold. Both are best-effort: a repository
+   * whose commits or pull requests the token cannot list answers zero, which demotes it to the
+   * `pushed_at` fallback rather than failing discovery for the whole portfolio.
+   *
+   * Commit *authorship* is the signal, not committership. On this account an agent pushes under
+   * the owner's identity and authors as them, and that is intended: an agent moving a repository
+   * on the owner's behalf is the owner's project moving.
+   */
+  async ownerActivity(
+    repositoryFullName: string,
+    ownerLogin: string,
+    since: string,
+  ): Promise<OwnerActivity> {
+    const commits = await this.#readOptionalSurface<{ sha: string }[]>(
+      `/repos/${repositoryFullName}/commits?author=${encodeURIComponent(ownerLogin)}&since=${encodeURIComponent(since)}&per_page=100`,
+      "Contents",
+      [],
+      `${repositoryFullName} will fall back to repository push time for discovery`,
+    );
+    if (commits.length > 0) return { commits: commits.length, pullRequests: 0 };
+
+    const pulls = await this.#readOptionalSurface<RawPull[]>(
+      `/repos/${repositoryFullName}/pulls?state=all&sort=updated&direction=desc&per_page=100`,
+      "Pull requests",
+      [],
+      `${repositoryFullName} will fall back to repository push time for discovery`,
+    );
+    const mine = pulls.filter(
+      (pr) => pr.updated_at >= since && (pr.user?.login ?? "").toLowerCase() === ownerLogin.toLowerCase(),
+    );
+
+    return { commits: 0, pullRequests: mine.length };
+  }
+
+  /**
    * Commit statuses for a head SHA, mapped onto the same shape as check runs.
    *
    * A missing or empty combined status is a normal answer, not a failure.
@@ -217,10 +350,24 @@ export class HttpGitHubClient implements GitHubPort {
     const observedAt = new Date().toISOString();
     const repo = await this.#get<{ default_branch: string }>(`/repos/${repositoryFullName}`);
 
-    const list = await this.#get<RawPull[]>(
-      `/repos/${repositoryFullName}/pulls?state=all&sort=updated&direction=desc&per_page=${
-        options.limit ?? 30
-      }`,
+    /**
+     * Pull requests, newest update first, walked until the window is exhausted.
+     *
+     * The cursor does double duty: it is the ordering key the walk stops on, so a repository
+     * with hundreds of pull requests costs one page in steady state and never silently drops
+     * the thirty-first. `limit` remains a budget for the pathological first sync of a very busy
+     * repository, but it no longer decides what the owner is allowed to see.
+     */
+    const list = await this.#getAllPages<RawPull>(
+      `/repos/${repositoryFullName}/pulls?state=all&sort=updated&direction=desc`,
+      {
+        budget: options.limit ?? 200,
+        stop: (page) => {
+          if (!options.updatedSince) return false;
+          const last = page[page.length - 1];
+          return last !== undefined && last.updated_at <= options.updatedSince;
+        },
+      },
     );
 
     const relevant = list.filter(

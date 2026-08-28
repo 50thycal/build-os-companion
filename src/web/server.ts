@@ -24,7 +24,7 @@ import {
 } from "./auth.ts";
 import { loginPage, setupRequiredPage } from "./views/login.ts";
 import { layout } from "./views/layout.ts";
-import { feedView } from "./views/feed.ts";
+import { feedView, portfolioView } from "./views/feed.ts";
 import { needsMeView, type NeedsMeItem } from "./views/needs-me.ts";
 import { projectListView, projectView } from "./views/project.ts";
 import { briefingView } from "./views/briefing.ts";
@@ -257,7 +257,7 @@ async function handle(
         tab: "feed",
         needsCount,
         signOut,
-        body: feedView(app.feed({ limit: 60 }), now),
+        body: portfolioView(app.portfolio({ limit: 120 }), now),
       }),
     );
     return;

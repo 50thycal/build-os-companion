@@ -23,11 +23,13 @@ import {
 } from "../domain/attention.ts";
 import type { CompanionEvent } from "../domain/events.ts";
 import type {
+  IntegrityCode,
   ProjectState,
   PullRequestState,
   SessionState,
   WorkstreamState,
 } from "../domain/state.ts";
+import { integritySeverity } from "../domain/state.ts";
 import type { SourceRef } from "../domain/provenance.ts";
 import { describeQuietPullRequest } from "../domain/describe.ts";
 
@@ -41,9 +43,15 @@ export interface AttentionInput {
   recentEvents?: CompanionEvent[];
 }
 
-function itemId(projectId: string, entityType: string, entityId: string, reason: ReasonCode): string {
+function itemId(
+  projectId: string,
+  entityType: string,
+  entityId: string,
+  reason: ReasonCode,
+  discriminator?: string,
+): string {
   const hash = createHash("sha256")
-    .update([projectId, entityType, entityId, reason].join("|"), "utf8")
+    .update([projectId, entityType, entityId, reason, discriminator ?? ""].join("|"), "utf8")
     .digest("hex");
   return `att_${hash.slice(0, 20)}`;
 }
@@ -56,6 +64,11 @@ interface DraftItem {
   reasonText: string;
   recommendedAction: string;
   evidence: SourceRef[];
+  /**
+   * Extra key material for the item id, when one entity can carry several items under the same
+   * reason code. Without it two integrity findings about one workstream collapse into one item.
+   */
+  discriminator?: string;
 }
 
 function hoursBetween(from: string, to: Date): number {
@@ -203,6 +216,8 @@ function workstreamRules(
   sessions: SessionState[],
   now: Date,
   thresholds: AttentionThresholds,
+  /** Workstreams whose recorded blocker GitHub says is already met. */
+  contradictedBlockers: Set<string>,
 ): DraftItem[] {
   const entityId = ws.workstreamId;
   const evidence = [ws.source];
@@ -228,7 +243,26 @@ function workstreamRules(
 
   const items: DraftItem[] = [];
 
-  if (ws.status === "BLOCKED") {
+  if (ws.status === "BLOCKED" && contradictedBlockers.has(ws.workstreamId)) {
+    /**
+     * The blocker is recorded, and GitHub says the thing it waits on has already happened.
+     *
+     * Repeating it as `WORKSTREAM_BLOCKED` would send the owner to do work that is in the base
+     * branch — the exact errand this pass exists to stop. It is not deleted either, because
+     * deleting it would be the Companion deciding the artifact is wrong. The integrity finding
+     * raised alongside this says both things and asks the owner to settle it; this item exists
+     * so the suppression is on the record rather than an unexplained absence.
+     */
+    items.push({
+      entityType: "WORKSTREAM",
+      entityId,
+      severity: "NONE",
+      reasonCode: "AUTONOMOUS_PROGRESS",
+      reasonText: `${ws.workstreamId} records a blocker that GitHub shows is already met; the contradiction is reported instead of the blocker.`,
+      recommendedAction: "Nothing here — see the integrity finding for this workstream.",
+      evidence,
+    });
+  } else if (ws.status === "BLOCKED") {
     // A session blocker flagged `needs_owner` is what turns "blocked" into "blocked on you".
     const ownerBlocked = sessions.some(
       (s) => s.workstreamId === ws.workstreamId && s.blockers.some((b) => b.needsOwner),
@@ -381,24 +415,64 @@ function sessionRules(session: SessionState): DraftItem[] {
 // Project
 // ---------------------------------------------------------------------------
 
+/**
+ * What to do about each integrity finding.
+ *
+ * Written per code rather than generically because a recommended action that says "reconcile the
+ * records" for every finding is a recommended action the owner learns to skip. The one thing
+ * none of these may ever say is which side to believe: the Companion reports that the two
+ * sources disagree, and choosing between them is the owner's judgement, not a rule's.
+ */
+function integrityAction(code: IntegrityCode): string {
+  switch (code) {
+    case "WORKSTREAM_STATE_BEHIND_GITHUB":
+      return "Move the workstream on to the phase the merged work actually left it in, or say why it is still where it is.";
+    case "BLOCKER_ALREADY_RESOLVED":
+      return "Clear the blocker if the merge resolved it, or rewrite it to name what is actually outstanding.";
+    case "WORKSTREAM_PR_STATE_MISMATCH":
+      return "Decide which record is wrong and correct that one; do not leave both standing.";
+    case "MERGED_WITHOUT_APPROVAL":
+      return "Record what review this actually had, or note the exception. It merged without a verdict naming its head.";
+    case "REVIEW_EVIDENCE_MUTATED":
+      return "The verdict was edited after it was given. Post a fresh verdict; an edited one cannot clear the gate.";
+    case "REVIEW_STALE":
+      return "Re-review the current head, or move the branch back to the commit that was approved.";
+    case "FINAL_HEAD_UNVERIFIED":
+      return "Get an approving review on the current head; the finalization commit could not name itself.";
+    case "REVIEW_RECORD_MISSING":
+      return "Record a verdict for the linked pull request before it merges.";
+    case "APPROVED_WITHOUT_REVIEWED_HEAD":
+      return "Name the reviewed commit. An approval that names no commit proves nothing about the code.";
+    default:
+      return "Reconcile the board and the workstream files.";
+  }
+}
+
+/**
+ * Integrity findings as attention, one per finding.
+ *
+ * They used to be collapsed into a single `LOW` project-level item — which put every one of them
+ * below the `MEDIUM` threshold `Needs Me` uses, so the reconciliation output this whole
+ * application exists to produce could not reach the screen it was for. Now each finding carries
+ * its own severity and is addressed to the workstream it is about, so it appears beside that
+ * workstream rather than on a project-wide list the owner has to go looking for.
+ */
+function integrityRules(state: ProjectState): DraftItem[] {
+  return state.integrityWarnings.map((warning) => ({
+    entityType: warning.workstreamId ? ("WORKSTREAM" as const) : ("PROJECT" as const),
+    entityId: warning.workstreamId ?? state.projectId,
+    severity: integritySeverity(warning.code) as Severity,
+    reasonCode: "BUILD_OS_INTEGRITY" as const,
+    reasonText: warning.message,
+    recommendedAction: integrityAction(warning.code),
+    evidence: warning.sources,
+    /** Distinguishes several findings about one workstream, which would otherwise share an id. */
+    discriminator: warning.code,
+  }));
+}
+
 function projectRules(state: ProjectState, recentEvents: CompanionEvent[]): DraftItem[] {
   const items: DraftItem[] = [];
-
-  if (state.integrityWarnings.length > 0) {
-    const first = state.integrityWarnings[0]!;
-    items.push({
-      entityType: "PROJECT",
-      entityId: state.projectId,
-      severity: "LOW",
-      reasonCode: "BUILD_OS_INTEGRITY",
-      reasonText:
-        state.integrityWarnings.length === 1
-          ? first.message
-          : `${state.integrityWarnings.length} Build OS records disagree, starting with: ${first.message}`,
-      recommendedAction: "Reconcile the board and the workstream files.",
-      evidence: first.sources,
-    });
-  }
 
   const syncFailure = recentEvents.filter((e) => e.eventType === "SYNC_FAILED").at(-1);
   if (syncFailure) {
@@ -425,18 +499,27 @@ export function computeAttention(input: AttentionInput): AttentionItem[] {
   const { state, now, ownerLogin } = input;
   const createdAt = now.toISOString();
 
+  const contradictedBlockers = new Set(
+    state.integrityWarnings
+      .filter((warning) => warning.code === "BLOCKER_ALREADY_RESOLVED" && warning.workstreamId)
+      .map((warning) => warning.workstreamId!),
+  );
+
   const drafts: DraftItem[] = [
     ...state.pullRequests.flatMap((pr) =>
       pullRequestRules(pr, state.sessions, ownerLogin, now, thresholds),
     ),
-    ...state.workstreams.flatMap((ws) => workstreamRules(ws, state.sessions, now, thresholds)),
+    ...state.workstreams.flatMap((ws) =>
+      workstreamRules(ws, state.sessions, now, thresholds, contradictedBlockers),
+    ),
     ...state.sessions.flatMap((session) => sessionRules(session)),
+    ...integrityRules(state),
     ...projectRules(state, input.recentEvents ?? []),
   ];
 
   return drafts
-    .map((draft) => ({
-      id: itemId(state.projectId, draft.entityType, draft.entityId, draft.reasonCode),
+    .map(({ discriminator, ...draft }) => ({
+      id: itemId(state.projectId, draft.entityType, draft.entityId, draft.reasonCode, discriminator),
       projectId: state.projectId,
       createdAt,
       ...draft,

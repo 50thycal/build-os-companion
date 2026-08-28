@@ -309,16 +309,81 @@ function checkRecord(
   return warnings;
 }
 
+/** Phases at which the implementation has not, by the workstream's own account, landed yet. */
+const PRE_REVIEW_PHASES = new Set([
+  "IDEA",
+  "EXPLORE",
+  "MODEL",
+  "DECIDE",
+  "BUILD_CARD",
+  "READY_TO_BUILD",
+  "BUILDING",
+]);
+
 /**
  * The v0.4 failure this closes: a workstream left saying `REVIEW` long after its PR merged, so the
  * durable record on main describes a state that no longer exists. Finalization is what moves it.
+ *
+ * Dogfooding added the harder half. `REVIEW` with settled PRs was the only shape detected, so a
+ * workstream sitting at `READY_TO_BUILD` and `BLOCKED` — *behind* review — while its
+ * implementation PR was already merged produced no finding at all. That is the more misleading
+ * of the two: the first reports a step not taken, the second tells the owner to go and do work
+ * that is already in the base branch.
+ *
+ * Every check here requires that *nothing linked is still open*. A workstream in `BUILDING` with
+ * one merged design-only PR and one open implementation PR is not behind anything — it is
+ * exactly where it says it is — and firing on it would make the finding worthless.
  */
 function checkStateAgreement(ws: WorkstreamState, linked: PullRequestState[]): IntegrityWarning[] {
   if (linked.length === 0) return [];
   const warnings: IntegrityWarning[] = [];
 
   const settled = linked.every((pr) => pr.lifecycle === "MERGED" || pr.lifecycle === "CLOSED");
+  const merged = linked.filter((pr) => pr.lifecycle === "MERGED");
   const complete = ws.phase === "COMPLETE" || ws.status === "COMPLETE";
+
+  if (settled && merged.length > 0 && ws.phase && PRE_REVIEW_PHASES.has(ws.phase)) {
+    const numbers = merged.map((pr) => `#${pr.number}`).join(", ");
+    warnings.push({
+      code: "WORKSTREAM_STATE_BEHIND_GITHUB",
+      workstreamId: ws.workstreamId,
+      message:
+        `${ws.workstreamId} still records ${ws.phase}${ws.status ? ` / ${ws.status}` : ""}, but its linked work ` +
+        `(${numbers}) has already merged and nothing linked is still open. The durable record is behind ` +
+        `what GitHub shows; it has not been moved on since the merge.`,
+      sources: [ws.source, ...merged.map((pr) => pr.source)],
+    });
+  }
+
+  // A blocker that names a pull request by number, where that pull request has since merged.
+  // The most literal form of "you are being asked to do something already done", and specific
+  // enough that it replaces the general observation below rather than joining it.
+  const named = namedPullRequests(ws.blocker ?? ws.nextStep);
+  const done = linked.filter((pr) => pr.lifecycle === "MERGED" && named.includes(pr.number));
+
+  if (ws.status === "BLOCKED" && done.length > 0) {
+    for (const pr of done) {
+      warnings.push({
+        code: "BLOCKER_ALREADY_RESOLVED",
+        workstreamId: ws.workstreamId,
+        message:
+          `${ws.workstreamId} waits on PR #${pr.number}, which merged${pr.mergedAt ? ` on ${pr.mergedAt.slice(0, 10)}` : ""}. ` +
+          `The prerequisite this workstream names is already met.`,
+        sources: [ws.source, pr.source],
+      });
+    }
+  } else if (settled && merged.length > 0 && ws.status === "BLOCKED") {
+    const numbers = merged.map((pr) => `#${pr.number}`).join(", ");
+    warnings.push({
+      code: "BLOCKER_ALREADY_RESOLVED",
+      workstreamId: ws.workstreamId,
+      message:
+        `${ws.workstreamId} is marked BLOCKED — ${ws.blocker ?? "no reason recorded"} — while ${numbers} ` +
+        `${merged.length === 1 ? "has" : "have"} merged. Either the blocker is stale or it is about something ` +
+        `other than that work.`,
+      sources: [ws.source, ...merged.map((pr) => pr.source)],
+    });
+  }
 
   if (ws.phase === "REVIEW" && settled) {
     const numbers = linked.map((pr) => `#${pr.number}`).join(", ");
@@ -346,4 +411,10 @@ function checkStateAgreement(ws: WorkstreamState, linked: PullRequestState[]): I
   }
 
   return warnings;
+}
+
+/** Pull request numbers mentioned in a sentence, so a stated prerequisite can be checked. */
+function namedPullRequests(text: string | undefined): number[] {
+  if (!text) return [];
+  return [...text.matchAll(/#(\d{1,6})\b/g)].map((match) => Number(match[1]));
 }

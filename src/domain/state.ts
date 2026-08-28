@@ -66,6 +66,16 @@ export interface PullRequestState {
   author: string;
   createdAt: string;
   updatedAt: string;
+  /**
+   * When the pull request merged, and when it closed. Absent while it is open.
+   *
+   * Carried because "merged" is not only a lifecycle value, it is a *moment*, and the owner
+   * reading a card after a day away needs the moment. Without these the only thing a merged
+   * pull request could say about itself was its pre-merge review and CI state — which is how a
+   * merged PR came to report "no review yet" as though review were still pending.
+   */
+  mergedAt?: string;
+  closedAt?: string;
   mergeability: MergeabilityState;
   reviewState: ReviewState;
   ciState: CiState;
@@ -350,7 +360,44 @@ export type IntegrityCode =
   | "WORKSTREAM_PR_STATE_MISMATCH"
   | "FINAL_HEAD_UNVERIFIED"
   | "REVIEW_RECORD_MISSING"
-  | "REVIEW_EVIDENCE_MUTATED";
+  | "REVIEW_EVIDENCE_MUTATED"
+  // Durable record versus observed reality
+  | "WORKSTREAM_STATE_BEHIND_GITHUB"
+  | "BLOCKER_ALREADY_RESOLVED";
+
+/**
+ * How loudly an integrity finding should be said.
+ *
+ * The distinction is which kind of disagreement it is. A **bookkeeping** finding is one source
+ * being untidy — a board row out of step with its own workstream file, a malformed field — and
+ * it is the owner's to tidy when convenient. A **reconciliation** finding is the durable record
+ * and GitHub telling the owner two different things about the same work, which is the single
+ * most valuable output this application has and belongs on `Needs Me`.
+ *
+ * That distinction did not exist before: every finding was folded into one `LOW` project-level
+ * item, and `Needs Me` shows `MEDIUM` and above. A contradiction between the layers was
+ * therefore structurally incapable of reaching the screen it was for.
+ */
+export function integritySeverity(code: IntegrityCode): "HIGH" | "MEDIUM" | "LOW" {
+  switch (code) {
+    // The v0.5 gate was breached, or its evidence cannot be trusted. Nothing outranks this.
+    case "MERGED_WITHOUT_APPROVAL":
+    case "REVIEW_EVIDENCE_MUTATED":
+      return "HIGH";
+    // The two layers disagree, or the gate is open and unsatisfied.
+    case "WORKSTREAM_PR_STATE_MISMATCH":
+    case "WORKSTREAM_STATE_BEHIND_GITHUB":
+    case "BLOCKER_ALREADY_RESOLVED":
+    case "REVIEW_STALE":
+    case "FINAL_HEAD_UNVERIFIED":
+    case "REVIEW_RECORD_MISSING":
+    case "APPROVED_WITHOUT_REVIEWED_HEAD":
+      return "MEDIUM";
+    // One source being untidy about itself.
+    default:
+      return "LOW";
+  }
+}
 
 /**
  * A problem with the *project's* Build OS records, addressed to its owner. Not a parser error:

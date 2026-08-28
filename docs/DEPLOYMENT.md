@@ -163,10 +163,16 @@ A missing CI permission is survivable by design: the client logs one line naming
 could not read and carries on. Losing pull requests, workstreams and decisions because one CI
 endpoint returned 403 would be losing everything to protect nothing.
 
-**"All repositories" covers every repository you own now and every one you create later.** So
-adding a project is adding a line to `companion.config.json` and restarting — the token never
-changes. The permissions above are the ceiling regardless of how many projects you follow, and
-none of them can write.
+**"All repositories" covers every repository you own now and every one you create later.** That is
+load-bearing rather than convenient: the Companion discovers which repositories to follow from
+your recent activity, so a project you start next week appears on its own, and a token scoped to
+a fixed list would make the discovery rule silently blind to exactly the new work you most want to
+see. The permissions above are the ceiling regardless of how many projects you follow, and none of
+them can write.
+
+Discovery also reads `Metadata` (repository listing) and `Contents` (commit authorship) — both
+already in the default three. Where `Contents` is denied for a particular repository, that
+repository falls back to push-time eligibility rather than failing discovery for the portfolio.
 
 The alternatives are both worse:
 

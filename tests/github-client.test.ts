@@ -51,7 +51,7 @@ describe("HttpGitHubClient", () => {
       token: "t",
       fetchImpl: routedFetch({
         [`/repos/${REPO}`]: { default_branch: "main" },
-        [`/repos/${REPO}/pulls?state=all&sort=updated&direction=desc&per_page=30`]: [PULL],
+        [`/repos/${REPO}/pulls?state=all&sort=updated&direction=desc&per_page=100&page=1`]: [PULL],
         [`/repos/${REPO}/pulls/84`]: PULL,
         [`/repos/${REPO}/pulls/84/reviews`]: [
           {
@@ -98,7 +98,7 @@ describe("HttpGitHubClient", () => {
       token: "t",
       fetchImpl: routedFetch({
         [`/repos/${REPO}`]: { default_branch: "main" },
-        [`/repos/${REPO}/pulls?state=all&sort=updated&direction=desc&per_page=30`]: [PULL],
+        [`/repos/${REPO}/pulls?state=all&sort=updated&direction=desc&per_page=100&page=1`]: [PULL],
         [`/repos/${REPO}/pulls/84`]: PULL,
         [`/repos/${REPO}/pulls/84/reviews`]: [],
         [`/repos/${REPO}/issues/84/comments`]: [
@@ -128,7 +128,7 @@ describe("HttpGitHubClient", () => {
       token: "t",
       fetchImpl: routedFetch({
         [`/repos/${REPO}`]: { default_branch: "main" },
-        [`/repos/${REPO}/pulls?state=all&sort=updated&direction=desc&per_page=30`]: [PULL],
+        [`/repos/${REPO}/pulls?state=all&sort=updated&direction=desc&per_page=100&page=1`]: [PULL],
         [`/repos/${REPO}/pulls/84`]: PULL,
         [`/repos/${REPO}/pulls/84/reviews`]: [],
         [`/repos/${REPO}/commits/headsha/check-runs`]: { check_runs: [] },
@@ -145,7 +145,7 @@ describe("HttpGitHubClient", () => {
       token: "t",
       fetchImpl: routedFetch({
         [`/repos/${REPO}`]: { default_branch: "main" },
-        [`/repos/${REPO}/pulls?state=all&sort=updated&direction=desc&per_page=30`]: [PULL],
+        [`/repos/${REPO}/pulls?state=all&sort=updated&direction=desc&per_page=100&page=1`]: [PULL],
       }),
     });
 
@@ -159,7 +159,7 @@ describe("HttpGitHubClient", () => {
       token: "t",
       fetchImpl: routedFetch({
         [`/repos/${REPO}`]: { default_branch: "main" },
-        [`/repos/${REPO}/pulls?state=all&sort=updated&direction=desc&per_page=30`]: [bot],
+        [`/repos/${REPO}/pulls?state=all&sort=updated&direction=desc&per_page=100&page=1`]: [bot],
         [`/repos/${REPO}/pulls/84`]: bot,
         [`/repos/${REPO}/pulls/84/reviews`]: [],
         [`/repos/${REPO}/commits/headsha/check-runs`]: { check_runs: [] },
@@ -200,5 +200,124 @@ describe("HttpGitHubClient", () => {
     });
 
     await expect(client.observe(REPO)).rejects.toBeInstanceOf(GitHubApiError);
+  });
+});
+
+/**
+ * Pagination.
+ *
+ * `per_page=30` on a single page was the whole of the old listing, in both places it matters:
+ * the pull requests of one repository and the repositories of one account. A truncated answer is
+ * indistinguishable downstream from a quiet one, which is how a portfolio of thirteen active
+ * repositories rendered as two.
+ */
+describe("pagination", () => {
+  function paged(pages: Record<string, unknown[]>, extra: Record<string, unknown> = {}): typeof fetch {
+    return (async (input: Parameters<typeof fetch>[0]) => {
+      const url = String(input);
+      // Matched on the end of the URL, not with `includes`: `per_page=100&page=2` contains the
+      // substring `page=1` (inside `per_page=100`), and a looser matcher answers every page with
+      // page one's body — which loops forever.
+      const match = Object.keys(pages).find((path) => url.endsWith(path));
+      if (match) return jsonResponse(pages[match]);
+      const other = Object.keys(extra).find((path) => url.endsWith(path));
+      if (other) return jsonResponse(extra[other]);
+      return new Response("not found", { status: 404, statusText: "Not Found" });
+    }) as typeof fetch;
+  }
+
+  it("walks every page of repositories until the window is exhausted", async () => {
+    const full = Array.from({ length: 100 }, (_, i) => ({
+      full_name: `50thycal/r${i}`,
+      default_branch: "main",
+      pushed_at: "2026-08-27T00:00:00Z",
+      private: false,
+      fork: false,
+      archived: false,
+    }));
+    const tail = [
+      { full_name: "50thycal/last", default_branch: "main", pushed_at: "2026-08-26T00:00:00Z" },
+      // Sorted by push descending, so this one ends the walk rather than being filtered alone.
+      { full_name: "50thycal/old", default_branch: "main", pushed_at: "2026-01-01T00:00:00Z" },
+    ];
+
+    const client = new HttpGitHubClient({
+      token: "t",
+      fetchImpl: paged({ "page=1": full, "page=2": tail }),
+    });
+
+    const found = await client.listRepositories({ pushedSince: "2026-06-29T00:00:00Z" });
+    expect(found).toHaveLength(101);
+    expect(found.at(-1)!.fullName).toBe("50thycal/last");
+    // The one outside the window is dropped rather than followed on a stale push.
+    expect(found.map((r) => r.fullName)).not.toContain("50thycal/old");
+  });
+
+  it("stops walking once a page falls out of the window", async () => {
+    let requested = 0;
+    const fetchImpl = (async (input: Parameters<typeof fetch>[0]) => {
+      const url = String(input);
+      if (url.includes("/user/repos")) {
+        requested += 1;
+        return jsonResponse([
+          { full_name: "50thycal/a", default_branch: "main", pushed_at: "2026-01-01T00:00:00Z" },
+        ]);
+      }
+      return new Response("not found", { status: 404, statusText: "Not Found" });
+    }) as typeof fetch;
+
+    const client = new HttpGitHubClient({ token: "t", fetchImpl });
+    await client.listRepositories({ pushedSince: "2026-06-29T00:00:00Z" });
+    expect(requested).toBe(1);
+  });
+
+  it("counts owner commits, and falls back to pull requests when there are none", async () => {
+    const client = new HttpGitHubClient({
+      token: "t",
+      fetchImpl: paged({}, {
+        [`/repos/${REPO}/commits?author=50thycal&since=2026-06-29T00%3A00%3A00Z&per_page=100`]: [
+          { sha: "a" },
+          { sha: "b" },
+        ],
+      }),
+    });
+
+    expect(await client.ownerActivity(REPO, "50thycal", "2026-06-29T00:00:00Z")).toEqual({
+      commits: 2,
+      pullRequests: 0,
+    });
+  });
+
+  it("attributes a repository by the owner's own pull requests, not everybody's", async () => {
+    const client = new HttpGitHubClient({
+      token: "t",
+      fetchImpl: paged({}, {
+        [`/repos/${REPO}/commits?author=50thycal&since=2026-06-29T00%3A00%3A00Z&per_page=100`]: [],
+        [`/repos/${REPO}/pulls?state=all&sort=updated&direction=desc&per_page=100`]: [
+          { ...PULL, updated_at: "2026-08-23T11:40:00Z" },
+          { ...PULL, number: 85, user: { login: "someone-else" }, updated_at: "2026-08-23T11:40:00Z" },
+          { ...PULL, number: 86, updated_at: "2026-01-01T00:00:00Z" },
+        ],
+      }),
+    });
+
+    expect(await client.ownerActivity(REPO, "50thycal", "2026-06-29T00:00:00Z")).toEqual({
+      commits: 0,
+      pullRequests: 1,
+    });
+  });
+
+  it("answers no activity rather than failing when the token cannot read a repository", async () => {
+    // Discovery must degrade to the push-time fallback for one repository, never take the whole
+    // portfolio down because one listing was denied.
+    const client = new HttpGitHubClient({
+      token: "t",
+      fetchImpl: (async () => new Response("no", { status: 403, statusText: "Forbidden" })) as typeof fetch,
+    });
+
+    expect(await client.ownerActivity(REPO, "50thycal", "2026-06-29T00:00:00Z")).toEqual({
+      commits: 0,
+      pullRequests: 0,
+    });
   });
 });

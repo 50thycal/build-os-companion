@@ -16,7 +16,7 @@
  * choice stays reversible.
  */
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 /**
  * `seq` is the spine of the whole design.
@@ -106,4 +106,11 @@ export const MIGRATIONS: string[][] = [
   // workstream predating the project's move to v0.5 is judged by the v0.5 review gate, so a
   // database that forgot it would start accusing settled work after every deploy.
   [`ALTER TABLE projects ADD COLUMN build_os_adopted_at TEXT`],
+  // Why a project is followed. `PINNED` is the owner's word; everything else is the discovery
+  // rule's, and only the rule's own finds are allowed to age out again.
+  [
+    `ALTER TABLE projects ADD COLUMN discovery_signal TEXT`,
+    `ALTER TABLE projects ADD COLUMN discovery_evidence TEXT`,
+    `ALTER TABLE projects ADD COLUMN discovered_at TEXT`,
+  ],
 ];

@@ -7,6 +7,7 @@
  */
 
 import { describe, expect, it } from "vitest";
+import type { GitHubPort } from "../src/ingest/github/client.ts";
 
 import { openDatabase } from "../src/store/database.ts";
 import { CompanionStore } from "../src/store/store.ts";
@@ -57,6 +58,34 @@ const since = (h: ReturnType<typeof harness>, now = NOW) =>
 
 const pack = (h: ReturnType<typeof harness>, now = NOW) =>
   buildFactPack({ store: h.store, ledger: h.ledger, ownerUserId: OWNER, now });
+
+/**
+ * The live Party Games artifacts with everything the attention engine could legitimately raise
+ * already dealt with, so a test about an owner who owes nothing is testing exactly that.
+ *
+ * Two edits, not one. Answering WS-001's open decisions used to be the whole of it; it no longer
+ * is, because WS-002 sits in REVIEW while the pull request that carried it has merged, and that
+ * contradiction now reaches `Needs Me` instead of sitting below its threshold as a LOW
+ * project-level note. Finalizing WS-002 is precisely what the owner would do about it.
+ */
+function nothingOutstanding(port: GitHubPort): GitHubPort["readFile"] {
+  return async (repo, path) => {
+    const file = await port.readFile(repo, path);
+    if (!file) return file;
+    if (path.includes("WS-001")) {
+      return { ...file, content: file.content.replace(/^## Open Decisions[\s\S]*$/m, "## Open Decisions\n\nNone.\n") };
+    }
+    if (path.includes("WS-002")) {
+      return {
+        ...file,
+        content: file.content
+          .replace(/^\*\*Phase:\*\* REVIEW/m, "**Phase:** COMPLETE")
+          .replace(/^\*\*Status:\*\* Active/m, "**Status:** Complete"),
+      };
+    }
+    return file;
+  };
+}
 
 describe("since I last checked", () => {
   it("calls the first look a first look rather than news", async () => {
@@ -169,14 +198,7 @@ describe("since I last checked", () => {
     h.store.markChecked(OWNER, first.sequence, NOW.toISOString());
 
     const port = livePartyGamesPort();
-    const answered = {
-      ...port,
-      readFile: async (repo: string, path: string) => {
-        const file = await port.readFile(repo, path);
-        if (!file || !path.includes("WS-001")) return file;
-        return { ...file, content: file.content.replace(/^## Open Decisions[\s\S]*$/m, "## Open Decisions\n\nNone.\n") };
-      },
-    };
+    const answered = { ...port, readFile: nothingOutstanding(port) };
 
     await durableSync({
       store: h.store,
@@ -243,10 +265,12 @@ describe("the fact pack", () => {
     await sync(h);
     const needsMe = pack(h).sections.find((s) => s.key === "WHAT_NEEDS_ME")!;
 
-    expect(needsMe.facts).toHaveLength(1);
+    // The decisions, and the WS-002 record that still says REVIEW after its PR merged.
+    expect(needsMe.facts).toHaveLength(2);
     expect(needsMe.facts[0]!.severity).toBe("HIGH");
     expect(needsMe.facts[0]!.action).toContain("Answer the open decisions");
     expect(needsMe.facts[0]!.refs.map((r) => r.kind)).toContain("ATTENTION");
+    expect(needsMe.facts[1]!.text).toContain("WS-002 is still in REVIEW");
   });
 
   it("reports both active workstreams and what each is doing", async () => {
@@ -263,14 +287,7 @@ describe("the fact pack", () => {
   it("says nothing needs the owner when nothing does, rather than going quiet", async () => {
     const h = harness();
     const port = livePartyGamesPort();
-    const answered = {
-      ...port,
-      readFile: async (repo: string, path: string) => {
-        const file = await port.readFile(repo, path);
-        if (!file || !path.includes("WS-001")) return file;
-        return { ...file, content: file.content.replace(/^## Open Decisions[\s\S]*$/m, "## Open Decisions\n\nNone.\n") };
-      },
-    };
+    const answered = { ...port, readFile: nothingOutstanding(port) };
 
     await durableSync({
       store: h.store,

@@ -299,6 +299,8 @@ export function derivePullRequestState(
     author: pr.author,
     createdAt: pr.createdAt,
     updatedAt: pr.updatedAt,
+    mergedAt: pr.mergedAt,
+    closedAt: pr.closedAt,
     mergeability: deriveMergeability(pr),
     reviewState: deriveReviewState(pr),
     ciState: deriveCiState(pr),
