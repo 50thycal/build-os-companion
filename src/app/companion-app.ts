@@ -17,6 +17,7 @@ import type { AttentionThresholds } from "../domain/attention.ts";
 import type { CompanionEvent } from "../domain/events.ts";
 import type { ProjectState, PullRequestState, SessionState, WorkstreamState } from "../domain/state.ts";
 import { buildFeed, rankFeed, type FeedCard } from "../feed/cards.ts";
+import { buildPortfolio, type ProjectGroup } from "../feed/portfolio.ts";
 import type { GitHubPort } from "../ingest/github/client.ts";
 import { SqliteEventLedger } from "../ledger/sqlite-ledger.ts";
 import type { CompanionStore, ReadCursor, StoredProject, TrackedAttentionItem } from "../store/store.ts";
@@ -136,6 +137,23 @@ export class CompanionApp {
 
     const ranked = rankFeed(cards, now);
     return options.limit ? ranked.slice(0, options.limit) : ranked;
+  }
+
+  /**
+   * The feed as a portfolio: one group per followed project, ranked.
+   *
+   * The same cards `feed()` returns, arranged. Once the owner follows a dozen repositories a
+   * flat stream stops answering "what changed?" — six cards from one busy project bury the one
+   * card from another that actually needs them — so the top level becomes the project and the
+   * cards sit underneath it.
+   */
+  portfolio(options: { visiblePerProject?: number; limit?: number } = {}): ProjectGroup[] {
+    const cards = this.feed({ limit: options.limit });
+    const projects = this.projects()
+      .filter((project) => cards.some((card) => card.projectId === project.id))
+      .map((project) => ({ project, state: this.#store.loadProjectState(project.id) }));
+
+    return buildPortfolio({ projects, cards, visiblePerProject: options.visiblePerProject });
   }
 
   // -------------------------------------------------------------------------

@@ -355,23 +355,12 @@ function checkStateAgreement(ws: WorkstreamState, linked: PullRequestState[]): I
     });
   }
 
-  if (settled && merged.length > 0 && ws.status === "BLOCKED") {
-    const numbers = merged.map((pr) => `#${pr.number}`).join(", ");
-    warnings.push({
-      code: "BLOCKER_ALREADY_RESOLVED",
-      workstreamId: ws.workstreamId,
-      message:
-        `${ws.workstreamId} is marked BLOCKED — ${ws.blocker ?? "no reason recorded"} — while ${numbers} ` +
-        `${merged.length === 1 ? "has" : "have"} merged. Either the blocker is stale or it is about something ` +
-        `other than that work.`,
-      sources: [ws.source, ...merged.map((pr) => pr.source)],
-    });
-  }
-
   // A blocker that names a pull request by number, where that pull request has since merged.
-  // The most literal form of "you are being asked to do something already done".
+  // The most literal form of "you are being asked to do something already done", and specific
+  // enough that it replaces the general observation below rather than joining it.
   const named = namedPullRequests(ws.blocker ?? ws.nextStep);
   const done = linked.filter((pr) => pr.lifecycle === "MERGED" && named.includes(pr.number));
+
   if (ws.status === "BLOCKED" && done.length > 0) {
     for (const pr of done) {
       warnings.push({
@@ -383,6 +372,17 @@ function checkStateAgreement(ws: WorkstreamState, linked: PullRequestState[]): I
         sources: [ws.source, pr.source],
       });
     }
+  } else if (settled && merged.length > 0 && ws.status === "BLOCKED") {
+    const numbers = merged.map((pr) => `#${pr.number}`).join(", ");
+    warnings.push({
+      code: "BLOCKER_ALREADY_RESOLVED",
+      workstreamId: ws.workstreamId,
+      message:
+        `${ws.workstreamId} is marked BLOCKED — ${ws.blocker ?? "no reason recorded"} — while ${numbers} ` +
+        `${merged.length === 1 ? "has" : "have"} merged. Either the blocker is stale or it is about something ` +
+        `other than that work.`,
+      sources: [ws.source, ...merged.map((pr) => pr.source)],
+    });
   }
 
   if (ws.phase === "REVIEW" && settled) {

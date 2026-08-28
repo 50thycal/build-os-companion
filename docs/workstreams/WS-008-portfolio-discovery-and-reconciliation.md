@@ -137,6 +137,34 @@ asked for; whether 60 days is the right window is answerable only after living w
 Approved and inlined in the Context and Mental Model above: the five defect classes, their root
 causes, the precedence model, and the discovery rule. Implementation follows those directly.
 
+## What this pass says about the other workstreams
+
+Phases are the owner's to set. These are findings, not moves.
+
+| Workstream | Finding |
+|---|---|
+| **WS-001** — domain + event ledger | **Can close on the owner's confirmation.** Every reconstruction case held: a pull request opened, updated, reviewed and merged rebuilds to `MERGED` with its merge time; one closed without merging is unmistakably distinct; a workstream through several phase changes keeps the latest as canonical with the earlier ones subordinate; a durable record disagreeing with GitHub reconstructs *both* sides plus the finding; and a newly eligible repository backfills its window and nothing else. The only change the ledger needed was `mergedAt`/`closedAt` on the projection — a missing fact, not a broken model. |
+| **WS-002** — GitHub feed MVP | **Not closeable on rendering; closeable on coverage once the owner has run it.** This is where the blocking defect was, and discovery, pagination, lifecycle summaries, collapsing and project grouping are all now in. What cannot be asserted from inside the repository is the thing the workstream is actually about: whether the feed represents the owner's real portfolio. That needs one run against their token. |
+| **WS-003** — Build OS workstream integration | **Can close on the owner's confirmation.** The Party Games contradiction is now a finding rather than three sentences competing on one card, and the precedence model it needed is written down in `ARCHITECTURE.md` rather than implied. |
+| **WS-005** — attention engine + catch-up briefing | **Half closeable.** `Needs Me` no longer sends the owner after a merged prerequisite and no longer hides contradictions below its own threshold. The *catch-up briefing* half is not done: the fact pack is still assembled per project, and across a dozen projects that is a dozen briefings rather than one. Recorded below as WS-010 rather than expanded into this pull request. |
+| **WS-007** — owner-facing application | **Owner's call, and not yet.** The application now groups a portfolio instead of listing two repositories, but "something I could check each morning" is a judgement only made by checking it each morning. |
+| **WS-004** — agent session checkpoint protocol | Unchanged, and confirmed as the next real capability. Dogfooding made the gap concrete: for every card the Companion can say what the record claims and what GitHub observed, and for none of them can it say what a session was doing when it stopped. The two sources it has are both *outcomes*; a stalled session leaves no outcome at all, so it is invisible rather than merely unexplained. |
+| **WS-006** — podcast renderer | Stays blocked. The written representation improved but has not been used in anger once. |
+
+## New workstreams this pass should produce
+
+Recorded rather than built, so this pull request stays reviewable.
+
+- **WS-009 — portfolio-scale sync budget.** The cost model changed with the follow set. One
+  repository's cycle is roughly five requests per touched pull request, and thirteen repositories
+  make a first sync expensive enough to matter against an hourly rate limit. This pass bounds it
+  with a backfill floor at the discovery window and by paginating on the update cursor, which is
+  enough to be correct and not enough to be a strategy. Wanted: per-project budgets, staggered
+  scheduling, and a visible answer when a cycle was cut short.
+- **WS-010 — cross-project catch-up.** The fact pack answers "what happened in this project".
+  After a day away across a portfolio the question is "what happened, anywhere, that I should care
+  about" — one briefing, ranked across projects, not one per repository.
+
 ## Implementation State
 
 Building. Implementation PR: see Review State.

@@ -73,25 +73,61 @@ project is marked stale; the last picture that was true stays on screen, labelle
 
 ## Configuration
 
-`companion.config.json`. Adding a repository is adding a line — no code change:
+### Which repositories appear
+
+**You do not register them.** The Companion follows any repository your credentials can read that
+you have been active in recently — a rolling 60-day window — so a project enters the feed when you
+start working in it and leaves when you stop.
+
+Eligibility, in order:
+
+1. **Owner-authored commits** in the window. The strongest signal, and it counts commits an agent
+   authored under your identity, because that is your project moving.
+2. **Owner-authored or updated pull requests** in the window.
+3. **`pushed_at` alone**, as a fallback. It is not evidence *you* did anything — an upstream sync
+   moves it on a fork, a bot moves it anywhere — so it is never enough on its own for a fork or an
+   archived repository.
+
+Private repositories are included wherever the token can read them. There is no cap on how many
+projects you may have, and listing is paginated to the end of the window rather than to the first
+page. A repository with no Build OS layer still appears: GitHub activity alone makes a useful
+project feed, and Build OS enriches it rather than being the price of admission.
+
+Ask what the rule currently finds, without syncing anything:
+
+```bash
+GITHUB_TOKEN=... npm run sync -- --discover --owner-login 50thycal
+```
+
+It prints what it followed, the evidence for each, and — as usefully — what it rejected and why.
+
+### `companion.config.json`
+
+The config file is the **exceptions** to that rule, not the rule. An empty `projects` list is a
+working configuration.
 
 ```json
 {
   "ownerLogin": "50thycal",
+  "discovery": { "enabled": true, "lookbackDays": 60, "exclude": [] },
   "projects": [
-    { "repository": "50thycal/party-games", "displayName": "Party Games" },
-    { "repository": "50thycal/build-os", "displayName": "Build OS" }
+    { "repository": "50thycal/party-games", "displayName": "Party Games" }
   ]
 }
 ```
 
-Where a repository keeps its Build OS artifacts is discovered, not assumed — the two seeded
-repositories genuinely differ. Per-entry `paths` overrides are available when discovery is not
-enough.
+An entry under `projects` does two things, either or both: it **pins** the repository, so it is
+followed whatever the window says, and it carries **overrides** — a display name, a default
+branch, `buildOs` to force detection on or off, and `paths` for a repository that keeps its Build
+OS artifacts somewhere detection would not find them. Where those artifacts live is otherwise
+discovered, not assumed; the two seeded repositories genuinely differ.
 
-**Adding a project is adding a line here and restarting.** No new token, no schema change, no
-code: a fine-grained token scoped to *All repositories* already covers anything you follow later.
-Dropping a line disables that project rather than deleting it, so its history survives a typo.
+`discovery.exclude` drops a repository whatever its activity says, and beats a pin.
+
+A repository that ages out of the window is **disabled, not deleted** — its history survives — and
+nothing ages out on a cycle where discovery could not answer, so a failed listing never empties
+the feed. No new token is needed as your portfolio grows: a fine-grained token scoped to *All
+repositories* already covers anything you start next week.
 
 | Variable | Default | Meaning |
 |---|---|---|

@@ -84,6 +84,23 @@ canonical Build OS artifact > GitHub PR/CI state > session checkpoint > AI infer
 `resolveField` applies it and returns conflicts rather than silently choosing. Two readings of the
 *same* source are staleness, not conflict — a UI that cries conflict every poll will be ignored.
 
+#### Which layer owns which field
+
+Precedence is a tiebreak, and a tiebreak is the wrong tool when two sources are not answering the
+same question. Each field has an **owner**, and the other layers do not get a vote on it:
+
+| Field | Owned by | Because |
+|---|---|---|
+| Workstream phase, status, goal, next step, open decisions | The durable Build OS artifact | GitHub cannot promote a workstream. The Companion must never write a phase the owner did not. |
+| Pull request lifecycle, merge time, CI, review, mergeability | GitHub | The artifact's prose about a pull request is a claim; GitHub is the fact. |
+| Whether a project is followed | The discovery rule, plus the owner's pins | See `src/ingest/github/discovery.ts`. |
+
+**Disagreement between owners is a third output, never a tiebreak.** A workstream recorded
+`READY_TO_BUILD / BLOCKED` while its implementation pull request is already merged produces an
+integrity finding saying exactly that. It does not become `COMPLETE`, and the blocker sentence is
+not deleted to make the card agree with itself. Silently picking a winner destroys the evidence
+that something went wrong, which is the one thing this application is for.
+
 ### Sessions — `src/ingest/checkpoint/`
 
 State, never transcripts. The vendored schema forbids additional properties, so a transcript field
@@ -118,10 +135,54 @@ Cards **collapse** many events about one entity into one, which is what turns "7
 reruns + a description edit" into "PR #84 moved into review; CI is now green", and what lets the
 feed survive the owner being away for a week. Every card keeps the ids of the events it collapsed.
 
+The headline is the most significant event, and the most recent *within* that significance band.
+Collapsed events become a subordinate **trail** in the order they happened — `Opened 7 h ago;
+merged 17 min ago.` — rather than being concatenated onto the headline, which produced `PR #146
+merged. Also: PR #146 opened.`: lossless and useless.
+
+`currentState` is **lifecycle-aware**, and this is where the sharpest dogfood defect was. A merged
+pull request said `checks green, no review yet` — two true historical facts assembled into a false
+sentence, because "no review yet" claims review is still to come. The conclusion now leads and the
+pre-merge facts follow it in the past tense. Nothing is discarded: that a merged PR carried no
+review is precisely what the merge gate cares about.
+
+A card also carries `contradictions`, the integrity findings about that entity, so a disagreement
+between the durable record and GitHub appears on the thing it concerns rather than on a
+project-level list the owner has to go and find.
+
 Ranking blends attention severity with recency, so a three-day-old blocking decision outranks a
 green CI run from a minute ago.
 
+`buildPortfolio` groups the ranked cards by project and repeats the same rule one level up: what
+needs the owner first, then what moved most recently. A flat stream answers "what changed?" for
+two repositories and stops answering it at ten, because a run of cards from one busy project
+buries the one card from another that needs somebody. Grouping never drops a card —
+`visible`/`collapsed` only decides what a screen shows first.
+
 Card content is **data**. Rendering belongs to whatever consumes it.
+
+### Discovery — `src/ingest/github/discovery.ts`
+
+Which repositories the Companion follows is a **rule**, not a list. It was a list — two names in
+`companion.config.json`, with everything else disabled — and the owner's portfolio was whatever
+they had last remembered to type.
+
+A repository is eligible when it was pushed inside a rolling window (60 days by default) *and*
+activity in that window can be attributed to the owner:
+
+1. owner-authored commits;
+2. owner-authored or updated pull requests;
+3. neither — `pushed_at` alone, which is a fallback rather than a signal of ownership, and is
+   never enough for a fork (an upstream sync moves it) or an archived repository.
+
+Private repositories are included wherever the token can read them. Listing paginates to the end
+of the window; there is no cap on how many projects a portfolio may have. `companion.config.json`
+keeps the two things a rule cannot know — a **pin**, followed whatever its activity says, and a
+**path override** — and an empty `projects` list is a working configuration.
+
+A repository that falls out of the window is **disabled, never deleted**: its rows and its history
+stay. Ageing out happens only on a cycle where discovery actually answered, so a failed listing
+never empties the feed.
 
 ---
 

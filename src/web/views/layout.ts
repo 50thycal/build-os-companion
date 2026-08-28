@@ -74,6 +74,20 @@ main { padding: 14px 16px 24px; max-width: 720px; margin: 0 auto; }
   font-size: 12px; color: var(--muted); margin-bottom: 6px;
 }
 .headline { font-weight: 600; font-size: 15px; margin: 0 0 6px; letter-spacing: -0.01em; }
+.group { margin: 0 0 18px; }
+.group-head {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 10px 2px 8px; border-bottom: 1px solid var(--line); margin-bottom: 8px;
+}
+/* A link in a header row is still a link a thumb has to hit: 44px, paid for with padding and
+   taken back with a negative margin so the row does not grow. */
+.group-name {
+  font-weight: 700; font-size: 16px; letter-spacing: -0.01em; text-decoration: none;
+  color: var(--text); display: flex; align-items: center;
+  min-height: 44px; padding-inline-end: 4px; margin-block: -10px;
+}
+.group-counts { flex-basis: 100%; font-size: 13px; color: var(--muted); }
+.more > summary { cursor: pointer; font-size: 13px; color: var(--muted); padding: 8px 2px; min-height: 44px; display: flex; align-items: center; }
 .history { margin: -2px 0 8px; font-size: 13px; color: var(--muted); }
 .row { margin: 6px 0; font-size: 14px; }
 .row .label {
