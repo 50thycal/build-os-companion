@@ -20,7 +20,8 @@ import { buildFeed, rankFeed, type FeedCard } from "../feed/cards.ts";
 import type { GitHubPort } from "../ingest/github/client.ts";
 import { SqliteEventLedger } from "../ledger/sqlite-ledger.ts";
 import type { CompanionStore, ReadCursor, StoredProject, TrackedAttentionItem } from "../store/store.ts";
-import { syncAll, type SyncAllResult } from "../sync/durable-sync.ts";
+import { syncAll, type DiscoveryOutcome, type SyncAllResult } from "../sync/durable-sync.ts";
+import type { CompanionConfig } from "../config/followed.ts";
 import { buildFactPack, type FactPack } from "../briefing/fact-pack.ts";
 import { buildSinceLastChecked, type SinceLastChecked } from "../briefing/since.ts";
 
@@ -46,6 +47,11 @@ export interface CompanionAppOptions {
   store: CompanionStore;
   ledger: SqliteEventLedger;
   ownerLogin: string;
+  /**
+   * The config, when this application should discover repositories rather than sync only what
+   * storage already holds. Omitted by tests and by the demo, which supply their own project set.
+   */
+  config?: CompanionConfig;
   /** Built per project so each can carry its own credentials later. */
   github?: (project: StoredProject) => GitHubPort;
   thresholds?: AttentionThresholds;
@@ -57,6 +63,9 @@ export class CompanionApp {
   readonly #ledger: SqliteEventLedger;
   readonly #ownerLogin: string;
   readonly #github?: (project: StoredProject) => GitHubPort;
+  readonly #config?: CompanionConfig;
+  /** Kept so the portfolio screen can report the rule that was applied and what it rejected. */
+  #lastDiscovery?: DiscoveryOutcome;
   readonly #thresholds?: AttentionThresholds;
   readonly #clock: () => Date;
 
@@ -65,6 +74,7 @@ export class CompanionApp {
     this.#ledger = options.ledger;
     this.#ownerLogin = options.ownerLogin;
     this.#github = options.github;
+    this.#config = options.config;
     this.#thresholds = options.thresholds;
     this.#clock = options.clock ?? (() => new Date());
   }
@@ -273,13 +283,21 @@ export class CompanionApp {
 
   async sync(): Promise<SyncAllResult> {
     if (!this.#github) throw new Error("no GitHub client configured; set GITHUB_TOKEN");
-    return syncAll({
+    const result = await syncAll({
       store: this.#store,
       ledger: this.#ledger,
       github: this.#github,
       ownerLogin: this.#ownerLogin,
       now: this.now(),
       thresholds: this.#thresholds,
+      config: this.#config,
     });
+    if (result.discovery) this.#lastDiscovery = result.discovery;
+    return result;
+  }
+
+  /** What the last sync's discovery rule concluded, for the screen that reports the portfolio. */
+  lastDiscovery(): DiscoveryOutcome | undefined {
+    return this.#lastDiscovery;
   }
 }

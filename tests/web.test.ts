@@ -8,6 +8,7 @@
  */
 
 import { describe, expect, it } from "vitest";
+import type { RepositoryFile } from "../src/ingest/github/client.ts";
 import type { AddressInfo } from "node:net";
 
 import { CompanionApp } from "../src/app/companion-app.ts";
@@ -36,6 +37,34 @@ const forbiddenGitHub: GitHubPort = {
   },
 };
 
+/**
+ * Answer everything the attention engine could legitimately raise on the live Party Games
+ * artifacts, so a test about the *empty* screen is testing an empty screen.
+ *
+ * Two edits, not one. Answering WS-001's open decisions used to be enough; it no longer is,
+ * because WS-002 sits in REVIEW while the pull request that carried it has merged, and that
+ * contradiction now reaches `Needs Me` instead of sitting below its threshold. Finalizing WS-002
+ * is exactly what the owner would do about it.
+ */
+function nothingOutstanding(readFile: (repo: string, path: string) => Promise<RepositoryFile | undefined>) {
+  return async (repo: string, path: string) => {
+    const file = await readFile(repo, path);
+    if (!file) return file;
+    if (path.includes("WS-001")) {
+      return { ...file, content: file.content.replace(/^## Open Decisions[\s\S]*$/m, "## Open Decisions\n\nNone.\n") };
+    }
+    if (path.includes("WS-002")) {
+      return {
+        ...file,
+        content: file.content
+          .replace(/^\*\*Phase:\*\* REVIEW/m, "**Phase:** COMPLETE")
+          .replace(/^\*\*Status:\*\* Active/m, "**Status:** Complete"),
+      };
+    }
+    return file;
+  };
+}
+
 async function seeded(options: { sync?: boolean; noDecisions?: boolean } = {}) {
   const db = openDatabase({ location: ":memory:" });
   const store = new CompanionStore(db);
@@ -45,14 +74,7 @@ async function seeded(options: { sync?: boolean; noDecisions?: boolean } = {}) {
   if (options.sync !== false) {
     const port = livePartyGamesPort();
     const github = options.noDecisions
-      ? {
-          ...port,
-          readFile: async (repo: string, path: string) => {
-            const file = await port.readFile(repo, path);
-            if (!file || !path.includes("WS-001")) return file;
-            return { ...file, content: file.content.replace(/^## Open Decisions[\s\S]*$/m, "## Open Decisions\n\nNone.\n") };
-          },
-        }
+      ? { ...port, readFile: nothingOutstanding(port.readFile) }
       : port;
 
     await durableSync({

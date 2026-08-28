@@ -6,6 +6,10 @@
  * the same functions a UI will call.
  *
  *   GITHUB_TOKEN=... npm run sync -- --repo owner/name --owner-login yourlogin
+ *
+ * Or ask which repositories the discovery rule would follow at all, without syncing any of them:
+ *
+ *   GITHUB_TOKEN=... npm run sync -- --discover --owner-login yourlogin [--days 60]
  */
 
 import { InMemoryEventLedger } from "../ledger/ledger.ts";
@@ -14,6 +18,7 @@ import { detectBuildOs } from "../ingest/buildos/detect.ts";
 import { syncProject } from "../sync/sync-project.ts";
 import { needsMe } from "../attention/engine.ts";
 import { DEFAULT_BUILD_OS_PATHS, type FollowedProject } from "../domain/state.ts";
+import { discoverRepositories } from "../ingest/github/discovery.ts";
 
 function arg(name: string): string | undefined {
   const index = process.argv.indexOf(`--${name}`);
@@ -27,14 +32,60 @@ function relative(from: string, now: Date): string {
   return `${Math.round(minutes / 1440)} d ago`;
 }
 
+function flag(name: string): boolean {
+  return process.argv.includes(`--${name}`);
+}
+
+/**
+ * Print the discovery rule's answer and its evidence, including the near misses.
+ *
+ * The rejections matter as much as the finds. "Why is this repository not in my feed?" is a
+ * question the owner will ask, and a rule that cannot answer it is a rule they cannot trust.
+ */
+async function discover(ownerLogin: string, token: string, lookbackDays: number): Promise<void> {
+  const github = new HttpGitHubClient({ token });
+  const result = await discoverRepositories({
+    port: github,
+    ownerLogin,
+    now: new Date(),
+    policy: { lookbackDays },
+  });
+
+  console.log(`\nRepositories with ${ownerLogin} activity since ${result.since.slice(0, 10)} (${lookbackDays}-day window)\n`);
+  for (const repo of result.repositories) {
+    const tags = [repo.private ? "private" : undefined, repo.fork ? "fork" : undefined, repo.archived ? "archived" : undefined]
+      .filter(Boolean)
+      .join(", ");
+    console.log(`  ${repo.fullName}${tags ? ` [${tags}]` : ""}`);
+    console.log(`      ${repo.signal}${repo.attributed ? "" : " (unattributed)"} — ${repo.evidence}`);
+  }
+  console.log(`\n${result.repositories.length} followed, ${result.rejected.length} rejected\n`);
+  for (const rejection of result.rejected) {
+    console.log(`  ${rejection.fullName}: ${rejection.reason}`);
+  }
+}
+
 async function main(): Promise<void> {
   const repo = arg("repo");
   const ownerLogin = arg("owner-login") ?? repo?.split("/")[0];
   const token = process.env.GITHUB_TOKEN;
 
-  if (!repo || !token) {
-    console.error("usage: GITHUB_TOKEN=... npm run sync -- --repo owner/name [--owner-login login]");
+  if (!token || (!repo && !flag("discover"))) {
+    console.error(
+      "usage: GITHUB_TOKEN=... npm run sync -- --repo owner/name [--owner-login login]\n" +
+        "       GITHUB_TOKEN=... npm run sync -- --discover --owner-login login [--days 60]",
+    );
     process.exitCode = 1;
+    return;
+  }
+
+  if (!repo) {
+    if (!ownerLogin) {
+      console.error("--discover needs --owner-login: the rule is about one person's activity");
+      process.exitCode = 1;
+      return;
+    }
+    await discover(ownerLogin, token, Number(arg("days") ?? 60));
     return;
   }
 

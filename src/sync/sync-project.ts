@@ -46,6 +46,16 @@ export interface SyncInput {
   sessions?: SessionState[];
   /** Feed window. */
   since?: string;
+  /**
+   * How far back the *first* poll of a repository reaches.
+   *
+   * Once a repository has synced, `lastSyncedAt` is the cursor and a cycle costs one page. The
+   * first cycle has no cursor, and without a floor it would walk a repository's entire pull
+   * request history — several requests per pull request, across every newly discovered project,
+   * in one cycle. The activity window is the honest bound: the feed is a picture of recent work,
+   * so pull requests untouched in that window are not what the owner opened the app to see.
+   */
+  backfillSince?: string;
 }
 
 export interface SyncResult {
@@ -157,7 +167,7 @@ export async function syncProject(input: SyncInput): Promise<SyncResult> {
   // --- GitHub ------------------------------------------------------------
   try {
     const observation = await github.observe(project.repositoryFullName, {
-      updatedSince: project.lastSyncedAt,
+      updatedSince: project.lastSyncedAt ?? input.backfillSince,
     });
     const result = ledger.append(
       normalizeGitHubObservation(observation, {

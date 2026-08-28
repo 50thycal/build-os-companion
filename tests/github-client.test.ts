@@ -51,7 +51,7 @@ describe("HttpGitHubClient", () => {
       token: "t",
       fetchImpl: routedFetch({
         [`/repos/${REPO}`]: { default_branch: "main" },
-        [`/repos/${REPO}/pulls?state=all&sort=updated&direction=desc&per_page=30`]: [PULL],
+        [`/repos/${REPO}/pulls?state=all&sort=updated&direction=desc&per_page=100&page=1`]: [PULL],
         [`/repos/${REPO}/pulls/84`]: PULL,
         [`/repos/${REPO}/pulls/84/reviews`]: [
           {
@@ -98,7 +98,7 @@ describe("HttpGitHubClient", () => {
       token: "t",
       fetchImpl: routedFetch({
         [`/repos/${REPO}`]: { default_branch: "main" },
-        [`/repos/${REPO}/pulls?state=all&sort=updated&direction=desc&per_page=30`]: [PULL],
+        [`/repos/${REPO}/pulls?state=all&sort=updated&direction=desc&per_page=100&page=1`]: [PULL],
         [`/repos/${REPO}/pulls/84`]: PULL,
         [`/repos/${REPO}/pulls/84/reviews`]: [],
         [`/repos/${REPO}/issues/84/comments`]: [
@@ -128,7 +128,7 @@ describe("HttpGitHubClient", () => {
       token: "t",
       fetchImpl: routedFetch({
         [`/repos/${REPO}`]: { default_branch: "main" },
-        [`/repos/${REPO}/pulls?state=all&sort=updated&direction=desc&per_page=30`]: [PULL],
+        [`/repos/${REPO}/pulls?state=all&sort=updated&direction=desc&per_page=100&page=1`]: [PULL],
         [`/repos/${REPO}/pulls/84`]: PULL,
         [`/repos/${REPO}/pulls/84/reviews`]: [],
         [`/repos/${REPO}/commits/headsha/check-runs`]: { check_runs: [] },
@@ -145,7 +145,7 @@ describe("HttpGitHubClient", () => {
       token: "t",
       fetchImpl: routedFetch({
         [`/repos/${REPO}`]: { default_branch: "main" },
-        [`/repos/${REPO}/pulls?state=all&sort=updated&direction=desc&per_page=30`]: [PULL],
+        [`/repos/${REPO}/pulls?state=all&sort=updated&direction=desc&per_page=100&page=1`]: [PULL],
       }),
     });
 
@@ -159,7 +159,7 @@ describe("HttpGitHubClient", () => {
       token: "t",
       fetchImpl: routedFetch({
         [`/repos/${REPO}`]: { default_branch: "main" },
-        [`/repos/${REPO}/pulls?state=all&sort=updated&direction=desc&per_page=30`]: [bot],
+        [`/repos/${REPO}/pulls?state=all&sort=updated&direction=desc&per_page=100&page=1`]: [bot],
         [`/repos/${REPO}/pulls/84`]: bot,
         [`/repos/${REPO}/pulls/84/reviews`]: [],
         [`/repos/${REPO}/commits/headsha/check-runs`]: { check_runs: [] },

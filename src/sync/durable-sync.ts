@@ -15,7 +15,9 @@ import type {
   SessionState,
   WorkstreamState,
 } from "../domain/state.ts";
-import type { GitHubPort } from "../ingest/github/client.ts";
+import { canDiscover, type GitHubPort } from "../ingest/github/client.ts";
+import { discoverRepositories, windowStart, type DiscoveredRepository } from "../ingest/github/discovery.ts";
+import { applyConfig, type CompanionConfig } from "../config/followed.ts";
 import { SqliteEventLedger } from "../ledger/sqlite-ledger.ts";
 import type { CompanionStore, StoredProject, TrackedAttentionItem } from "../store/store.ts";
 import { syncProject } from "./sync-project.ts";
@@ -29,6 +31,8 @@ export interface DurableSyncInput {
   now: Date;
   thresholds?: AttentionThresholds;
   sessions?: SessionState[];
+  /** Floor for the first poll of a repository. See `SyncInput.backfillSince`. */
+  backfillSince?: string;
 }
 
 export interface DurableSyncResult {
@@ -67,6 +71,7 @@ export async function durableSync(input: DurableSyncInput): Promise<DurableSyncR
     previousWorkstreams: indexBy(previous.workstreams, (ws) => ws.workstreamId),
     previousDecisions: indexBy(previous.decisions, (d) => d.decisionId),
     sessions: input.sessions ?? previous.sessions,
+    backfillSince: input.backfillSince,
   });
 
   const sequence = ledger.latestSequence();
@@ -142,6 +147,17 @@ function pickFresh<T>(fresh: T[], previous: T[]): T[] {
 export interface SyncAllResult {
   results: DurableSyncResult[];
   sequence: number;
+  /** What the discovery rule found this cycle, when it ran. */
+  discovery?: DiscoveryOutcome;
+}
+
+export interface DiscoveryOutcome {
+  repositories: DiscoveredRepository[];
+  rejected: { fullName: string; reason: string }[];
+  /** The start of the activity window, so the rule that was applied is reportable. */
+  since: string;
+  /** Set when discovery was attempted and could not answer. Nothing ages out on such a cycle. */
+  failed?: string;
 }
 
 /**
@@ -157,8 +173,15 @@ export async function syncAll(input: {
   ownerLogin: string;
   now: Date;
   thresholds?: AttentionThresholds;
+  /**
+   * The config, when the caller wants repository discovery run first. Absent, the followed set
+   * is whatever storage already holds — which is what the tests and the demo want, and what a
+   * caller with no discovering port gets anyway.
+   */
+  config?: CompanionConfig;
 }): Promise<SyncAllResult> {
   const results: DurableSyncResult[] = [];
+  const discovery = input.config ? await runDiscovery(input.store, input.config, input.github, input.now) : undefined;
 
   for (const project of input.store.listProjects()) {
     const github = typeof input.github === "function" ? input.github(project) : input.github;
@@ -172,6 +195,7 @@ export async function syncAll(input: {
           ownerLogin: input.ownerLogin,
           now: input.now,
           thresholds: input.thresholds,
+          backfillSince: discovery?.since,
         }),
       );
     } catch (error) {
@@ -189,5 +213,66 @@ export async function syncAll(input: {
     }
   }
 
-  return { results, sequence: input.ledger.latestSequence() };
+  return { results, sequence: input.ledger.latestSequence(), discovery };
+}
+
+/**
+ * Decide the followed set before syncing it.
+ *
+ * Ordered this way on purpose: a repository the owner started working in yesterday should appear
+ * in today's feed with today's events, not one cycle late. The failure path is the important
+ * one — when the listing cannot be read, `applyConfig` is still called so pins and overrides
+ * apply, but `discoveryRan` stays false and nothing is aged out on the strength of an answer
+ * nobody got.
+ */
+async function runDiscovery(
+  store: CompanionStore,
+  config: CompanionConfig,
+  github: GitHubPort | ((project: StoredProject) => GitHubPort),
+  now: Date,
+): Promise<DiscoveryOutcome> {
+  const since = windowStart(now, config.discovery.lookbackDays);
+  const port = typeof github === "function" ? github(store.listProjects()[0] ?? placeholderProject(config, now)) : github;
+
+  if (!config.discovery.enabled || !canDiscover(port)) {
+    applyConfig(store, config, now);
+    return {
+      repositories: [],
+      rejected: [],
+      since,
+      failed: config.discovery.enabled ? "this GitHub port cannot list repositories" : undefined,
+    };
+  }
+
+  try {
+    const result = await discoverRepositories({
+      port,
+      ownerLogin: config.ownerLogin,
+      now,
+      policy: {
+        lookbackDays: config.discovery.lookbackDays,
+        pinned: config.projects.map((entry) => entry.repository),
+        excluded: config.discovery.exclude,
+      },
+    });
+    applyConfig(store, config, now, { discovered: result.repositories, discoveryRan: true });
+    return { repositories: result.repositories, rejected: result.rejected, since: result.since };
+  } catch (error) {
+    applyConfig(store, config, now);
+    return { repositories: [], rejected: [], since, failed: String(error) };
+  }
+}
+
+/** Enough of a project to build a client from, for the very first cycle of an empty database. */
+function placeholderProject(config: CompanionConfig, now: Date): StoredProject {
+  return {
+    id: "discovery",
+    ownerUserId: config.ownerLogin,
+    repositoryFullName: `${config.ownerLogin}/discovery`,
+    defaultBranch: "main",
+    buildOsDetected: false,
+    paths: { projectModel: "", decisions: "", activeWork: "", workstreamDir: "" },
+    enabled: false,
+    createdAt: now.toISOString(),
+  };
 }

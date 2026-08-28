@@ -45,13 +45,21 @@ const app = new CompanionApp({
   store,
   ledger,
   ownerLogin: config.ownerLogin,
+  // Passing the config is what turns discovery on: without it the served application syncs only
+  // what storage already holds, which is how the feed came to be two repositories.
+  config,
   github: token ? () => new HttpGitHubClient({ token }) : undefined,
 });
 
 console.log(`[companion] config   ${configPath}`);
 console.log(`[companion] database ${dbPath}`);
 console.log(`[companion] owner    ${config.ownerLogin}`);
-console.log(`[companion] projects ${projects.map((p) => p.repositoryFullName).join(", ") || "none"}`);
+console.log(`[companion] pinned   ${projects.map((p) => p.repositoryFullName).join(", ") || "none"}`);
+console.log(
+  config.discovery.enabled
+    ? `[companion] discover repositories with owner activity in the last ${config.discovery.lookbackDays} days`
+    : "[companion] discover disabled — following pinned projects only",
+);
 if (!token) {
   console.log("[companion] no GITHUB_TOKEN — serving stored state only, syncing is disabled");
 }
@@ -63,7 +71,15 @@ else console.error("[companion] auth     NOT CONFIGURED — set COMPANION_PASSWO
 if (token && process.env.COMPANION_SYNC_ON_START !== "0") {
   console.log("[companion] syncing…");
   try {
-    const { results } = await app.sync();
+    const { results, discovery } = await app.sync();
+    if (discovery?.failed) {
+      console.warn(`[companion] discovery failed: ${discovery.failed} — following the previous set`);
+    } else if (discovery) {
+      console.log(
+        `[companion] discovered ${discovery.repositories.length} repositories since ${discovery.since.slice(0, 10)}: ` +
+          discovery.repositories.map((r) => `${r.fullName} (${r.signal})`).join(", "),
+      );
+    }
     for (const result of results) {
       console.log(
         `[companion]   ${result.projectId}: +${result.appended.length} events` +

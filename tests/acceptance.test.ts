@@ -148,9 +148,16 @@ describe("the owner opens the Companion on a phone", () => {
     const rendered = await pages(app);
     const needs = app.needsMe();
 
-    expect(needs).toHaveLength(1);
+    // Two things, and the second one is the point of the whole application: the live Party
+    // Games records say WS-002 is in REVIEW while the pull request that carried it has merged.
+    // That contradiction used to be a LOW project-level item, below the threshold this screen
+    // uses, so the owner could never see it here.
+    expect(needs).toHaveLength(2);
     expect(needs[0]!.reasonCode).toBe("OWNER_DECISION_REQUIRED");
     expect(needs[0]!.severity).toBe("HIGH");
+    expect(needs[1]!.reasonCode).toBe("BUILD_OS_INTEGRITY");
+    expect(needs[1]!.severity).toBe("MEDIUM");
+    expect(needs[1]!.reasonText).toContain("WS-002 is still in REVIEW");
 
     // Each of the four questions the screen must answer.
     expect(rendered.needsMe).toContain("Why");                       // what and why

@@ -23,8 +23,19 @@ export function feedCard(card: FeedCard, now: Date): string {
       <span style="margin-left:auto">${ago(card.occurredAt, now)}</span>
     </div>
     <p class="headline">${card.whatChanged}</p>
+    ${raw(card.history ? html`<p class="history">${card.history}</p>` : "")}
     ${raw(card.whyItMatters ? html`<div class="row"><span class="label">Why it matters</span><span class="value">${card.whyItMatters}</span></div>` : "")}
     <div class="row"><span class="label">Where it stands</span><span class="value">${card.currentState}</span></div>
+    ${raw(
+      card.contradictions
+        ? card.contradictions
+            .map(
+              (finding) =>
+                html`<div class="row needs"><span class="label">Doesn't add up</span><span class="value">${finding}</span></div>`,
+            )
+            .join("")
+        : "",
+    )}
     <div class="row ${card.needsYou === "Nothing." ? "" : "needs"}">
       <span class="label">Needs you</span><span class="value">${card.needsYou}</span>
     </div>

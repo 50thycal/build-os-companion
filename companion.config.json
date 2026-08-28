@@ -1,8 +1,14 @@
 {
-  "$comment": "The projects this Companion follows. Add a repository by adding an entry; nothing else needs to change. Optional per-entry keys: displayName, defaultBranch, enabled, buildOs, and paths (projectModel, decisions, activeWork, workstreamDir) for a repository that keeps its Build OS artifacts somewhere detection would not find them.",
+  "$comment": "Not an allowlist. Repositories are discovered from GitHub: any repository the credentials can read with owner activity in the rolling window below. Entries under `projects` are exceptions to that rule — a pin (followed whatever its activity says) and/or an override (displayName, defaultBranch, buildOs, or paths: projectModel / decisions / activeWork / workstreamDir for a repository that keeps its Build OS artifacts somewhere detection would not find them). An empty `projects` list is a working configuration.",
   "ownerLogin": "50thycal",
+  "discovery": {
+    "enabled": true,
+    "lookbackDays": 60,
+    "exclude": []
+  },
   "projects": [
     { "repository": "50thycal/party-games", "displayName": "Party Games" },
-    { "repository": "50thycal/build-os", "displayName": "Build OS" }
+    { "repository": "50thycal/build-os", "displayName": "Build OS" },
+    { "repository": "50thycal/build-os-companion", "displayName": "Build OS Companion" }
   ]
 }

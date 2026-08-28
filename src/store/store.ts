@@ -18,6 +18,7 @@ import type {
   WorkstreamState,
 } from "../domain/state.ts";
 import type { SourceConflict } from "../domain/provenance.ts";
+import type { DiscoverySignal } from "../ingest/github/discovery.ts";
 import type { Database } from "./database.ts";
 import { transaction } from "./database.ts";
 
@@ -40,12 +41,25 @@ interface ProjectRow {
   last_synced_at: string | null;
   stale_since: string | null;
   last_error: string | null;
+  discovery_signal: string | null;
+  discovery_evidence: string | null;
+  discovered_at: string | null;
 }
 
 /** A followed project plus the operational state the sync loop keeps about it. */
 export interface StoredProject extends FollowedProject {
   displayName?: string;
   lastError?: string;
+  /**
+   * Why this project is followed. `PINNED` means the owner named it in the config file and it is
+   * never aged out; anything else came from the discovery rule and leaves the feed when the
+   * activity that admitted it falls out of the window.
+   */
+  discoverySignal?: DiscoverySignal;
+  /** The evidence sentence behind `discoverySignal`, kept so the owner can check the claim. */
+  discoveryEvidence?: string;
+  /** When discovery first admitted this project. */
+  discoveredAt?: string;
 }
 
 function toProject(row: ProjectRow): StoredProject {
@@ -64,6 +78,9 @@ function toProject(row: ProjectRow): StoredProject {
     lastSyncedAt: row.last_synced_at ?? undefined,
     staleSince: row.stale_since ?? undefined,
     lastError: row.last_error ?? undefined,
+    discoverySignal: (row.discovery_signal as DiscoverySignal | null) ?? undefined,
+    discoveryEvidence: row.discovery_evidence ?? undefined,
+    discoveredAt: row.discovered_at ?? undefined,
   };
 }
 
@@ -155,8 +172,8 @@ export class CompanionStore {
         `INSERT INTO projects (
            id, repository_full_name, owner_user_id, display_name, default_branch,
            build_os_detected, build_os_version, build_os_adopted_at, paths_json, enabled,
-           created_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           created_at, discovery_signal, discovery_evidence, discovered_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            repository_full_name = excluded.repository_full_name,
            owner_user_id        = excluded.owner_user_id,
@@ -166,7 +183,10 @@ export class CompanionStore {
            build_os_version     = excluded.build_os_version,
            build_os_adopted_at  = excluded.build_os_adopted_at,
            paths_json           = excluded.paths_json,
-           enabled              = excluded.enabled`,
+           enabled              = excluded.enabled,
+           discovery_signal     = excluded.discovery_signal,
+           discovery_evidence   = excluded.discovery_evidence,
+           discovered_at        = excluded.discovered_at`,
       )
       .run(
         project.id,
@@ -180,6 +200,9 @@ export class CompanionStore {
         JSON.stringify(project.paths),
         project.enabled ? 1 : 0,
         project.createdAt,
+        project.discoverySignal ?? null,
+        project.discoveryEvidence ?? null,
+        project.discoveredAt ?? null,
       );
   }
 

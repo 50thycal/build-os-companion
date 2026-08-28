@@ -74,6 +74,7 @@ main { padding: 14px 16px 24px; max-width: 720px; margin: 0 auto; }
   font-size: 12px; color: var(--muted); margin-bottom: 6px;
 }
 .headline { font-weight: 600; font-size: 15px; margin: 0 0 6px; letter-spacing: -0.01em; }
+.history { margin: -2px 0 8px; font-size: 13px; color: var(--muted); }
 .row { margin: 6px 0; font-size: 14px; }
 .row .label {
   display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
