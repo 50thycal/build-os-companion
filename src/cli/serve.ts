@@ -54,7 +54,9 @@ const app = new CompanionApp({
 console.log(`[companion] config   ${configPath}`);
 console.log(`[companion] database ${dbPath}`);
 console.log(`[companion] owner    ${config.ownerLogin}`);
-console.log(`[companion] pinned   ${projects.map((p) => p.repositoryFullName).join(", ") || "none"}`);
+// The whole followed set, which after a discovering deployment is mostly *not* pinned. Labelling
+// it "pinned" said eleven repositories were named in a config file that names three.
+console.log(`[companion] following ${projects.length}: ${projects.map((p) => p.repositoryFullName).join(", ") || "none"}`);
 console.log(
   config.discovery.enabled
     ? `[companion] discover repositories with owner activity in the last ${config.discovery.lookbackDays} days`
@@ -68,53 +70,82 @@ if (auth.mode === "REQUIRED") console.log("[companion] auth     password require
 else if (auth.mode === "DISABLED") console.warn("[companion] auth     DISABLED — every visitor sees this owner's private project state");
 else console.error("[companion] auth     NOT CONFIGURED — set COMPANION_PASSWORD; refusing to serve until you do");
 
-if (token && process.env.COMPANION_SYNC_ON_START !== "0") {
-  console.log("[companion] syncing…");
-  try {
-    const { results, discovery } = await app.sync();
-    if (discovery?.failed) {
-      console.warn(`[companion] discovery failed: ${discovery.failed} — following the previous set`);
-    } else if (discovery) {
-      console.log(
-        `[companion] discovered ${discovery.repositories.length} repositories since ${discovery.since.slice(0, 10)}: ` +
-          discovery.repositories.map((r) => `${r.fullName} (${r.signal})`).join(", "),
-      );
-    }
-    for (const result of results) {
-      console.log(
-        `[companion]   ${result.projectId}: +${result.appended.length} events` +
-          (result.syncFailed ? ` (failed: ${result.syncFailed})` : ""),
-      );
-    }
-  } catch (error) {
-    console.error("[companion] initial sync failed:", (error as Error).message);
-  }
-}
-
-const scheduler = startScheduler({
-  intervalMinutes: syncIntervalMinutes,
-  sync: () => app.sync(),
-  onResult: (result) => {
-    const appended = result.results.reduce((n, r) => n + r.appended.length, 0);
-    const failed = result.results.filter((r) => r.syncFailed).length;
-    if (appended > 0 || failed > 0) {
-      console.log(`[companion] scheduled sync: +${appended} events${failed > 0 ? `, ${failed} failing` : ""}`);
-    }
-  },
-  onError: (error) => console.error("[companion] scheduled sync failed:", (error as Error).message),
-});
-
-if (scheduler.running) console.log(`[companion] sync     every ${syncIntervalMinutes} minutes`);
-
+/**
+ * Listen first, sync second.
+ *
+ * The initial sync used to be awaited *before* `listen`, which was survivable while the
+ * deployment followed two repositories and stopped being survivable the moment discovery opened
+ * it to the owner's whole portfolio: eleven repositories take far longer than the platform's
+ * 30-second health-check timeout, so the container was killed mid-sync and never reached this
+ * line. The symptom read as "the build failed"; the cause was a startup that did unbounded work
+ * before it was willing to answer `/healthz`.
+ *
+ * Serving before syncing is also just correct. Every screen reads from the store, the store
+ * survives restarts, and the application's whole promise on a failed poll is that the last good
+ * picture stays on screen. A restart is not a reason to be unreachable — it is the case that
+ * promise exists for.
+ */
 const server = createCompanionServer({ app, auth });
 server.listen(port, host, () => {
   console.log(`[companion] listening on ${host}:${port}`);
 });
 
+let scheduler: ReturnType<typeof startScheduler> | undefined;
+
+function startSchedule(): void {
+  scheduler = startScheduler({
+    intervalMinutes: syncIntervalMinutes,
+    sync: () => app.sync(),
+    onResult: (result) => {
+      const appended = result.results.reduce((n, r) => n + r.appended.length, 0);
+      const failed = result.results.filter((r) => r.syncFailed).length;
+      if (appended > 0 || failed > 0) {
+        console.log(`[companion] scheduled sync: +${appended} events${failed > 0 ? `, ${failed} failing` : ""}`);
+      }
+    },
+    onError: (error) => console.error("[companion] scheduled sync failed:", (error as Error).message),
+  });
+  if (scheduler.running) console.log(`[companion] sync     every ${syncIntervalMinutes} minutes`);
+}
+
+if (token && process.env.COMPANION_SYNC_ON_START !== "0") {
+  console.log("[companion] syncing in the background; serving stored state meanwhile…");
+  // Deliberately not awaited. The scheduler starts only once this settles, so a first sync that
+  // outruns the poll interval can never overlap the next one.
+  void app
+    .sync()
+    .then(({ results, discovery }) => {
+      if (discovery?.failed) {
+        console.warn(`[companion] discovery failed: ${discovery.failed} — following the previous set`);
+      } else if (discovery) {
+        console.log(
+          `[companion] discovered ${discovery.repositories.length} repositories since ${discovery.since.slice(0, 10)}: ` +
+            discovery.repositories.map((r) => `${r.fullName} (${r.signal})`).join(", "),
+        );
+        for (const rejection of discovery.rejected) {
+          console.log(`[companion]   not followed — ${rejection.fullName}: ${rejection.reason}`);
+        }
+      }
+      for (const result of results) {
+        console.log(
+          `[companion]   ${result.projectId}: +${result.appended.length} events` +
+            (result.syncFailed ? ` (failed: ${result.syncFailed})` : ""),
+        );
+      }
+    })
+    .catch((error: unknown) => {
+      console.error("[companion] initial sync failed:", (error as Error).message);
+    })
+    .finally(startSchedule);
+} else {
+  startSchedule();
+}
+
 /** Close the database cleanly so WAL is checkpointed rather than left for recovery. */
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, () => {
-    scheduler.stop();
+    // May not exist yet: a shutdown during the very first sync arrives before the schedule starts.
+    scheduler?.stop();
     server.close(() => {
       db.close();
       process.exit(0);
