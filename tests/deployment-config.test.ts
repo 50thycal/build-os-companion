@@ -67,3 +67,48 @@ describe("railway.json", () => {
     expect(railway.deploy.numReplicas).toBe(1);
   });
 });
+
+/**
+ * Startup order.
+ *
+ * This is here rather than in the unit suite for the reason the file exists: `serve.ts` is a
+ * script, not a module, so nothing else in `npm test` executes it, and the failure it guards
+ * against is invisible until a container is killed on someone else's machine.
+ *
+ * What happened: the initial sync was awaited *before* `server.listen`. That was survivable while
+ * the deployment followed two repositories and stopped being survivable the moment discovery
+ * opened it to eleven — the sync ran far past `healthcheckTimeout`, `/healthz` never answered,
+ * and the platform killed the container mid-sync. It reads like a build failure and is really a
+ * startup that did unbounded work before agreeing to answer.
+ */
+const serve = readFileSync(join(root, "src/cli/serve.ts"), "utf8");
+
+describe("the server starts before it syncs", () => {
+  it("listens before the initial sync is kicked off", () => {
+    const listen = serve.indexOf("server.listen(");
+    const sync = serve.indexOf("app\n    .sync()");
+    expect(listen).toBeGreaterThan(-1);
+    expect(sync).toBeGreaterThan(-1);
+    expect(listen).toBeLessThan(sync);
+  });
+
+  it("never awaits the initial sync at the top level", () => {
+    // `await app.sync()` outside a callback is the exact shape that blocked startup.
+    expect(/^\s*(const .*=\s*)?await app\.sync\(\)/m.test(serve)).toBe(false);
+  });
+
+  it("keeps a health-check timeout the app can actually meet", () => {
+    // Meetable only because listening no longer waits for GitHub. If this grows a dependency on
+    // network work again, the number below stops being achievable and this suite should be the
+    // thing that says so.
+    expect(railway.deploy.healthcheckTimeout).toBeGreaterThan(0);
+    expect(railway.deploy.healthcheckPath).toBe("/healthz");
+  });
+
+  it("tolerates a shutdown signal arriving before the schedule starts", () => {
+    // The scheduler is created only after the first sync settles, so the SIGTERM handler must
+    // not assume it exists — a container killed during a long first sync would otherwise die on
+    // a TypeError instead of closing its database cleanly.
+    expect(serve).toContain("scheduler?.stop()");
+  });
+});
