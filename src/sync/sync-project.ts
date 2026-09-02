@@ -21,7 +21,11 @@ import type {
 import { computeAttention } from "../attention/engine.ts";
 import { buildFeed, type FeedCard } from "../feed/cards.ts";
 import { GitHubApiError, type GitHubPort } from "../ingest/github/client.ts";
-import { normalizeGitHubObservation, normalizeSyncFailure } from "../ingest/github/normalize.ts";
+import {
+  normalizeBuildOsSyncFailure,
+  normalizeGitHubObservation,
+  normalizeSyncFailure,
+} from "../ingest/github/normalize.ts";
 import { detectBuildOs, workstreamFilePaths } from "../ingest/buildos/detect.ts";
 import { parseDecisions, toDecisionRecords } from "../ingest/buildos/parse.ts";
 import { reconcileBuildOsState, type WorkstreamFileInput } from "../ingest/buildos/reconcile.ts";
@@ -201,31 +205,61 @@ export async function syncProject(input: SyncInput): Promise<SyncResult> {
   let conflicts: ProjectState["conflicts"] = [];
 
   if (!syncFailed) {
-    const buildOs = await loadBuildOsState(input);
-    if (buildOs) {
-      workstreams = buildOs.workstreams;
-      decisions = buildOs.decisions;
-      warnings = buildOs.warnings;
-      conflicts = buildOs.conflicts;
-      detected = buildOs.detected;
+    /**
+     * Best-effort, like the CI reads inside `observe()` — and for the same reason. A repository
+     * whose GitHub pull-request data came through fine but whose Build OS artifacts could not be
+     * read or parsed this cycle must not lose that pull-request data. Before this guard existed,
+     * an error here propagated out of `syncProject` entirely: the whole cycle was recorded as
+     * failed, `buildProjectState` never ran, and a pull request whose *event* had already been
+     * appended to the ledger a moment earlier showed on the Feed as `No current state recorded.`
+     * — a fact the sync actually knew, discarded by an unrelated failure.
+     *
+     * On failure, `workstreams`/`decisions` stay empty for this cycle exactly as they do when
+     * the repository has no Build OS layer at all; `durableSync`'s `pickFresh` already retains
+     * the previous good values rather than blanking them, so nothing is lost there either. The
+     * failure itself is recorded as its own event rather than swallowed, so it can be seen and
+     * acted on instead of the app quietly serving stale workstream state indefinitely.
+     */
+    try {
+      const buildOs = await loadBuildOsState(input);
+      if (buildOs) {
+        workstreams = buildOs.workstreams;
+        decisions = buildOs.decisions;
+        warnings = buildOs.warnings;
+        conflicts = buildOs.conflicts;
+        detected = buildOs.detected;
 
-      const wsResult = ledger.append(
-        normalizeWorkstreams(workstreams, {
-          projectId: project.id,
-          previous: input.previousWorkstreams,
-        }),
-        now,
-      );
-      const decisionResult = ledger.append(
-        normalizeDecisions(decisions, {
-          projectId: project.id,
-          previous: input.previousDecisions,
+        const wsResult = ledger.append(
+          normalizeWorkstreams(workstreams, {
+            projectId: project.id,
+            previous: input.previousWorkstreams,
+          }),
+          now,
+        );
+        const decisionResult = ledger.append(
+          normalizeDecisions(decisions, {
+            projectId: project.id,
+            previous: input.previousDecisions,
+            observedAt: now.toISOString(),
+          }),
+          now,
+        );
+        appended.push(...wsResult.appended, ...decisionResult.appended);
+        duplicates += wsResult.duplicates + decisionResult.duplicates;
+      }
+    } catch (error) {
+      const reason = error instanceof GitHubApiError ? error.message : String(error);
+      const result = ledger.append(
+        normalizeBuildOsSyncFailure(project.id, {
+          repositoryFullName: project.repositoryFullName,
           observedAt: now.toISOString(),
+          reason,
+          statusCode: error instanceof GitHubApiError ? error.statusCode : undefined,
         }),
         now,
       );
-      appended.push(...wsResult.appended, ...decisionResult.appended);
-      duplicates += wsResult.duplicates + decisionResult.duplicates;
+      appended.push(...result.appended);
+      duplicates += result.duplicates;
     }
   }
 
