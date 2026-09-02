@@ -13,6 +13,7 @@ import { SqliteEventLedger } from "../src/ledger/sqlite-ledger.ts";
 import { durableSync, syncAll } from "../src/sync/durable-sync.ts";
 import { applyConfig, parseConfig, projectIdFor, ConfigError } from "../src/config/followed.ts";
 import { livePartyGamesPort, PARTY_GAMES } from "./live-port.ts";
+import type { AttentionItem } from "../src/domain/attention.ts";
 import type { GitHubPullRequestObservation } from "../src/ingest/github/types.ts";
 
 const NOW = new Date("2026-08-24T12:00:00Z");
@@ -304,6 +305,136 @@ describe("attention lifecycle", () => {
     const suppressed = first.openedAttention.filter((a) => a.severity === "NONE");
     expect(suppressed).toHaveLength(0);
     expect(h.store.openAttention().every((a) => a.severity !== "NONE")).toBe(true);
+  });
+});
+
+describe("attention dismissal", () => {
+  // "I've seen this" is an owner action, recorded as its own fact — never the deterministic
+  // engine's `clearedAt`, which means "this stopped being true." Confusing the two would let a
+  // dismissal read back later as resolution, which is exactly the kind of quiet rewrite this
+  // application exists to refuse to do anywhere else.
+  const draft = (overrides: Partial<AttentionItem> = {}): AttentionItem => ({
+    id: "att_test",
+    projectId: PARTY_GAMES.id,
+    entityType: "WORKSTREAM",
+    entityId: "WS-001",
+    severity: "MEDIUM",
+    reasonCode: "WORKSTREAM_STALE",
+    reasonText: "WS-001 has not moved",
+    recommendedAction: "Resume it or pause it",
+    evidence: [],
+    createdAt: "2026-08-24T12:00:00Z",
+    ...overrides,
+  });
+
+  function fresh() {
+    const db = openDatabase({ location: ":memory:" });
+    const store = new CompanionStore(db);
+    return store;
+  }
+
+  it("removes a dismissed item from the open list without touching clearedAt", () => {
+    const store = fresh();
+    store.reconcileAttention(PARTY_GAMES.id, [draft()], NOW.toISOString(), 1);
+
+    const [open] = store.openAttention(PARTY_GAMES.id);
+    expect(open).toBeDefined();
+
+    const dismissed = store.dismissAttention(open!.id, LATER.toISOString());
+    expect(dismissed?.dismissedAt).toBe(LATER.toISOString());
+    expect(dismissed?.clearedAt).toBeUndefined();
+
+    expect(store.openAttention(PARTY_GAMES.id)).toHaveLength(0);
+    expect(store.dismissedAttention(PARTY_GAMES.id).map((a) => a.id)).toEqual([open!.id]);
+  });
+
+  it("stays dismissed across a poll where the situation is unchanged", () => {
+    const store = fresh();
+    store.reconcileAttention(PARTY_GAMES.id, [draft()], NOW.toISOString(), 1);
+    const [open] = store.openAttention(PARTY_GAMES.id);
+    store.dismissAttention(open!.id, LATER.toISOString());
+
+    // The same rule fires again next cycle, same severity, same wording.
+    store.reconcileAttention(PARTY_GAMES.id, [draft()], "2026-08-24T14:00:00Z", 2);
+
+    expect(store.openAttention(PARTY_GAMES.id)).toHaveLength(0);
+    expect(store.dismissedAttention(PARTY_GAMES.id)).toHaveLength(1);
+  });
+
+  it("resurfaces a dismissed item when it gets worse", () => {
+    const store = fresh();
+    store.reconcileAttention(PARTY_GAMES.id, [draft({ severity: "MEDIUM" })], NOW.toISOString(), 1);
+    const [open] = store.openAttention(PARTY_GAMES.id);
+    store.dismissAttention(open!.id, LATER.toISOString());
+
+    // Same id, now HIGH — materially new information the owner was not actually told.
+    store.reconcileAttention(
+      PARTY_GAMES.id,
+      [draft({ severity: "HIGH", reasonText: "WS-001 is now blocked on you" })],
+      "2026-08-24T14:00:00Z",
+      2,
+    );
+
+    const [reopened] = store.openAttention(PARTY_GAMES.id);
+    expect(reopened?.id).toBe(open!.id);
+    expect(reopened?.severity).toBe("HIGH");
+    expect(reopened?.dismissedAt).toBeUndefined();
+    expect(store.dismissedAttention(PARTY_GAMES.id)).toHaveLength(0);
+  });
+
+  it("does not resurface a dismissed item that only got less severe", () => {
+    const store = fresh();
+    store.reconcileAttention(PARTY_GAMES.id, [draft({ severity: "HIGH" })], NOW.toISOString(), 1);
+    const [open] = store.openAttention(PARTY_GAMES.id);
+    store.dismissAttention(open!.id, LATER.toISOString());
+
+    store.reconcileAttention(PARTY_GAMES.id, [draft({ severity: "MEDIUM" })], "2026-08-24T14:00:00Z", 2);
+
+    expect(store.openAttention(PARTY_GAMES.id)).toHaveLength(0);
+    expect(store.dismissedAttention(PARTY_GAMES.id)[0]!.severity).toBe("MEDIUM");
+  });
+
+  it("starts undismissed when a resolved item recurs as a fresh occurrence", () => {
+    const store = fresh();
+    store.reconcileAttention(PARTY_GAMES.id, [draft()], NOW.toISOString(), 1);
+    const [open] = store.openAttention(PARTY_GAMES.id);
+    store.dismissAttention(open!.id, LATER.toISOString());
+
+    // The rule stops matching: resolved.
+    store.reconcileAttention(PARTY_GAMES.id, [], "2026-08-24T14:00:00Z", 2);
+    expect(store.openAttention(PARTY_GAMES.id)).toHaveLength(0);
+    expect(store.dismissedAttention(PARTY_GAMES.id)).toHaveLength(0);
+
+    // The same situation happens again later. A fresh occurrence, not a continuation of the
+    // dismissed one — the owner has not seen this instance of it.
+    store.reconcileAttention(PARTY_GAMES.id, [draft()], "2026-08-25T09:00:00Z", 3);
+    const reopened = store.openAttention(PARTY_GAMES.id);
+    expect(reopened).toHaveLength(1);
+    expect(reopened[0]!.dismissedAt).toBeUndefined();
+    expect(reopened[0]!.firstSeenAt).toBe("2026-08-25T09:00:00Z");
+  });
+
+  it("can be reversed", () => {
+    const store = fresh();
+    store.reconcileAttention(PARTY_GAMES.id, [draft()], NOW.toISOString(), 1);
+    const [open] = store.openAttention(PARTY_GAMES.id);
+    store.dismissAttention(open!.id, LATER.toISOString());
+    expect(store.openAttention(PARTY_GAMES.id)).toHaveLength(0);
+
+    const restored = store.undismissAttention(open!.id);
+    expect(restored?.dismissedAt).toBeUndefined();
+    expect(store.openAttention(PARTY_GAMES.id)).toHaveLength(1);
+  });
+
+  it("does nothing to an item that is already resolved", () => {
+    const store = fresh();
+    store.reconcileAttention(PARTY_GAMES.id, [draft()], NOW.toISOString(), 1);
+    const [open] = store.openAttention(PARTY_GAMES.id);
+    store.reconcileAttention(PARTY_GAMES.id, [], LATER.toISOString(), 2);
+
+    const result = store.dismissAttention(open!.id, "2026-08-24T15:00:00Z");
+    expect(result?.dismissedAt).toBeUndefined();
+    expect(result?.clearedAt).toBeDefined();
   });
 });
 

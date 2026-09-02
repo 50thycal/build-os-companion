@@ -10,7 +10,7 @@ import {
   projectPullRequests,
 } from "../src/projection/project.ts";
 import { computeAttention } from "../src/attention/engine.ts";
-import { buildFeed } from "../src/feed/cards.ts";
+import { buildFeed, rankFeed, type FeedCard } from "../src/feed/cards.ts";
 import { buildOsSnapshotInput, observation } from "./helpers.ts";
 import type { PullRequestState, WorkstreamState } from "../src/domain/state.ts";
 
@@ -130,5 +130,55 @@ describe("feed cards", () => {
       since: "2026-08-23T13:00:00Z",
     });
     expect(recent.length).toBeLessThan(cards.length);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe("feed ranking is chronological, not severity-weighted", () => {
+  // The old ranking blended severity into the score heavily enough that a HIGH card from days
+  // ago permanently sat above anything that happened since — a week-old blocked workstream
+  // pinned above this morning's merge, every time the Feed was opened. `Needs Me` already exists
+  // to answer "what needs me"; the Feed answers "what's new", and severity now only decorates a
+  // card, never reorders it.
+  const cardAt = (id: string, occurredAt: string, severity: "HIGH" | "NONE"): FeedCard => ({
+    id,
+    projectId: "p",
+    projectName: "Party Games",
+    entityLabel: "PR #1",
+    entityType: "PULL_REQUEST",
+    entityId: "pr:1",
+    occurredAt,
+    headline: id,
+    whatChanged: id,
+    currentState: "x",
+    needsYou: severity === "HIGH" ? "Do something" : "Nothing.",
+    severity,
+    rank: 0,
+    eventIds: [id],
+  });
+
+  it("puts the newest card first even when an older one is more severe", () => {
+    const ranked = rankFeed([
+      cardAt("old-high", "2026-08-20T00:00:00Z", "HIGH"),
+      cardAt("new-none", "2026-08-28T00:00:00Z", "NONE"),
+    ]);
+    expect(ranked.map((c) => c.id)).toEqual(["new-none", "old-high"]);
+  });
+
+  it("breaks a same-timestamp tie by id, deterministically", () => {
+    const ranked = rankFeed([
+      cardAt("b", "2026-08-28T00:00:00Z", "NONE"),
+      cardAt("a", "2026-08-28T00:00:00Z", "HIGH"),
+    ]);
+    expect(ranked.map((c) => c.id)).toEqual(["a", "b"]);
+  });
+
+  it("assigns rank purely by position, not by a severity-derived score", () => {
+    const ranked = rankFeed([
+      cardAt("newest", "2026-08-28T00:00:00Z", "NONE"),
+      cardAt("oldest", "2026-08-01T00:00:00Z", "HIGH"),
+    ]);
+    expect(ranked[0]!.rank).toBeGreaterThan(ranked[1]!.rank);
   });
 });

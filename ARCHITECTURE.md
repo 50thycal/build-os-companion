@@ -126,6 +126,16 @@ the reasons for speaking up.
 
 `Needs Me` is everything at `MEDIUM` or above.
 
+**A dismissal is the owner's fact, not the engine's.** `dismissedAt` (`src/store/store.ts`) records
+"I've seen this" and is filtered out of `openAttention()` and the badge count by default — but it
+is never `clearedAt`, which stays exclusively the engine's own determination that a rule stopped
+matching. Overloading one field with both meanings would let a dismissal read back later as
+resolution, which is exactly the kind of quiet rewrite the rest of this application refuses to do.
+A dismissal is not forever, either: it resurfaces on its own the moment the same item gets *worse*
+(a severity increase is information the owner was not actually told), and a fresh occurrence after
+a real resolution always starts undismissed. `Needs Me` still shows dismissed-but-open items behind
+a disclosure, honestly labeled as still true — nothing here pretends an open situation went away.
+
 ### Feed — `src/feed/`
 
 A card answers five questions: what changed, why it matters, where it is now, is anything blocked,
@@ -150,14 +160,17 @@ A card also carries `contradictions`, the integrity findings about that entity, 
 between the durable record and GitHub appears on the thing it concerns rather than on a
 project-level list the owner has to go and find.
 
-Ranking blends attention severity with recency, so a three-day-old blocking decision outranks a
-green CI run from a minute ago.
+**Ranking is pure chronology** — newest first, ties broken by id. It used to blend severity into
+the score heavily enough that a HIGH card from days ago sat permanently above anything that
+happened since: a week-old blocked workstream pinned above this morning's merge, every time the
+Feed was opened. That blend belongs to `Needs Me`, which already exists to answer "what needs me";
+the Feed answers a different question, "what's new," and severity is shown on a card — the badge,
+the `contradictions` row — never used to reorder it.
 
-`buildPortfolio` groups the ranked cards by project and repeats the same rule one level up: what
-needs the owner first, then what moved most recently. A flat stream answers "what changed?" for
-two repositories and stops answering it at ten, because a run of cards from one busy project
-buries the one card from another that needs somebody. Grouping never drops a card —
-`visible`/`collapsed` only decides what a screen shows first.
+Cards from every followed project interleave in that one chronological stream rather than being
+grouped by project — grouping was tried and reverted after real use read worse than a flat list
+with each card tagged by its project, and the app already has a project-first `/projects` view for
+that question.
 
 Card content is **data**. Rendering belongs to whatever consumes it.
 

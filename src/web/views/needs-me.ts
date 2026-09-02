@@ -31,7 +31,18 @@ export interface NeedsMeItem {
   evidence: CompanionEvent[];
 }
 
-function attentionCard(entry: NeedsMeItem, now: Date): string {
+/**
+ * `Dismiss` says "I've seen this," not "this is fixed."
+ *
+ * It never claims the underlying situation resolved — that would be the deterministic engine's
+ * call, made the next time it evaluates the rule, not a button's. A dismissed item is filtered
+ * out of the badge and this list by default, and reappears on its own the moment it gets *worse*
+ * (a higher severity is new information the owner has not actually been told), or the moment the
+ * engine reports it resolved and then true again — a fresh occurrence starts undismissed. Nothing
+ * here pretends a still-open situation went away; it only stops repeating one the owner already
+ * knows about.
+ */
+function attentionCard(entry: NeedsMeItem, now: Date, options: { dismissed?: boolean } = {}): string {
   const { item } = entry;
 
   const sources = item.evidence.map(
@@ -46,6 +57,14 @@ function attentionCard(entry: NeedsMeItem, now: Date): string {
     (event) => html`<li>${ago(event.occurredAt, now)} — ${event.summaryShort}</li>`,
   );
 
+  const action = options.dismissed
+    ? html`<form method="post" action="/needs-me/${item.id}/undismiss">
+        <button class="btn secondary" type="submit">Bring back</button>
+      </form>`
+    : html`<form method="post" action="/needs-me/${item.id}/dismiss">
+        <button class="btn secondary" type="submit">Dismiss</button>
+      </form>`;
+
   return html`<article class="card sev-${item.severity}">
     <div class="eyebrow">
       <strong>${entry.projectName}</strong>
@@ -56,6 +75,11 @@ function attentionCard(entry: NeedsMeItem, now: Date): string {
 
     <div class="row"><span class="label">Why</span><span class="value">${item.reasonText}</span></div>
     <div class="row needs"><span class="label">Do next</span><span class="value">${item.recommendedAction}</span></div>
+    ${raw(
+      options.dismissed
+        ? html`<div class="row"><span class="label">Dismissed</span><span class="value">${ago(item.dismissedAt, now)}. Still true; you said you'd seen it.</span></div>`
+        : "",
+    )}
 
     <details class="evidence">
       <summary>Why the system thinks so — ${item.reasonCode}</summary>
@@ -66,10 +90,25 @@ function attentionCard(entry: NeedsMeItem, now: Date): string {
       <ul>${raw(sources.join(""))}</ul>
       ${raw(events.length > 0 ? html`<ul>${raw(events.join(""))}</ul>` : "")}
     </details>
+
+    <div class="row">${raw(action)}</div>
   </article>`;
 }
 
-export function needsMeView(entries: NeedsMeItem[], now: Date, lastSyncedAt?: string): string {
+export function needsMeView(
+  entries: NeedsMeItem[],
+  now: Date,
+  lastSyncedAt?: string,
+  dismissedEntries: NeedsMeItem[] = [],
+): string {
+  const dismissedSection =
+    dismissedEntries.length > 0
+      ? html`<details class="more">
+          <summary>${dismissedEntries.length} dismissed — still open, just out of the way</summary>
+          ${raw(dismissedEntries.map((entry) => attentionCard(entry, now, { dismissed: true })).join(""))}
+        </details>`
+      : "";
+
   if (entries.length === 0) {
     return html`<div class="empty">
       <div class="big">Nothing needs you</div>
@@ -78,7 +117,8 @@ export function needsMeView(entries: NeedsMeItem[], now: Date, lastSyncedAt?: st
         state for, and no rule matched. This is a real answer, not an empty page.
       </p>
       <p class="muted">Last synced ${ago(lastSyncedAt, now)}.</p>
-    </div>`;
+    </div>
+    ${raw(dismissedSection)}`;
   }
 
   const sections = SEVERITY_ORDER.map((severity) => {
@@ -88,5 +128,5 @@ export function needsMeView(entries: NeedsMeItem[], now: Date, lastSyncedAt?: st
       ${raw(group.map((entry) => attentionCard(entry, now)).join(""))}`;
   });
 
-  return sections.join("");
+  return sections.join("") + dismissedSection;
 }

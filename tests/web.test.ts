@@ -210,6 +210,52 @@ describe("needs me", () => {
     expect(app.needsMe().every((item) => item.severity !== "NONE")).toBe(true);
     expect(app.needsMe().every((item) => item.reasonCode !== "AUTONOMOUS_PROGRESS")).toBe(true);
   });
+
+  it("dismisses an item through the route, and it stops counting", async () => {
+    const { app } = await seeded();
+    const before = app.needsMe();
+    const target = before[0]!;
+
+    await withServer(app, async (base) => {
+      const res = await fetch(`${base}/needs-me/${target.id}/dismiss`, { method: "POST" });
+      expect(res.ok).toBe(true); // fetch follows the redirect back to /needs-me
+    });
+
+    // Gone from the badge and the default list...
+    expect(app.needsMe().map((i) => i.id)).not.toContain(target.id);
+    // ...but never deleted, and never mistaken for resolved.
+    const dismissed = app.dismissed().find((i) => i.id === target.id);
+    expect(dismissed).toBeDefined();
+    expect(dismissed?.clearedAt).toBeUndefined();
+  });
+
+  it("shows a dismissed item on the page, and undismissing brings it back", async () => {
+    const { app } = await seeded();
+    const target = app.needsMe()[0]!;
+    app.dismiss(target.id);
+
+    await withServer(app, async (base) => {
+      const body = await (await fetch(`${base}/needs-me`)).text();
+      expect(body).toContain("dismissed");
+
+      const res = await fetch(`${base}/needs-me/${target.id}/undismiss`, { method: "POST" });
+      expect(res.ok).toBe(true);
+    });
+
+    expect(app.needsMe().map((i) => i.id)).toContain(target.id);
+  });
+
+  it("does nothing harmful to a dismiss for an id that does not exist", async () => {
+    const { app } = await seeded();
+    const before = app.needsMe().length;
+
+    await withServer(app, async (base) => {
+      const res = await fetch(`${base}/needs-me/att_nonexistent/dismiss`, { method: "POST" });
+      expect(res.ok).toBe(true);
+    });
+
+    expect(app.needsMe()).toHaveLength(before);
+  });
 });
 
 describe("project view", () => {
