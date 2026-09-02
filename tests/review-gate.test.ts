@@ -81,6 +81,11 @@ function pullRequest(overrides: Partial<PullRequestState> = {}): PullRequestStat
     ciState: "PASSED",
     requestedReviewers: [],
     approvedHeadShas: [],
+    ownerAcceptances: [],
+    // A pull request that carries a review of some kind, which is what these fixtures mean by a
+    // reviewed PR. Zero is its own case — a file claiming a verdict nothing outside it records —
+    // and is set explicitly by the tests for it.
+    recordedPositions: 1,
     changesRequestedBy: [],
     mutatedEvidence: [],
     workstreamIds: ["WS-011"],

@@ -125,3 +125,36 @@ describe("session staleness", () => {
     expect(session!.status).toBe("COMPLETED");
   });
 });
+
+describe("owner_result, once the schema carries it (v0.6, vendored at v0.11)", () => {
+  const base = {
+    schema_version: "1",
+    repository: "50thycal/build-os",
+    session_id: "sess_owner_result",
+    agent: "claude",
+    session_kind: "IMPLEMENTATION",
+    objective: "Record the owner-facing result",
+    status: "COMPLETED",
+    updated_at: "2026-09-02T09:00:00Z",
+  };
+
+  /**
+   * The vendored schema sets `additionalProperties: false`, so before the contract was synced a
+   * checkpoint carrying this field was rejected outright — not ignored. That is the concrete
+   * cost of a stale contract, and the reason a drifted hash is worth failing a build over.
+   */
+  it("accepts each of the three terminal states, and their absence", () => {
+    expect(validateCheckpoint(base).ok).toBe(true);
+    for (const state of ["SHIP", "DECISION", "BLOCKED", null]) {
+      expect(validateCheckpoint({ ...base, owner_result: state }).ok).toBe(true);
+    }
+  });
+
+  it("still refuses a state outside the three", () => {
+    // "no result yet" is never SHIP, and it is never a fourth word either.
+    const result = validateCheckpoint({ ...base, owner_result: "PROBABLY_FINE" });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable: the assertion above already failed");
+    expect(result.errors.join(" ")).toContain("owner_result");
+  });
+});

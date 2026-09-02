@@ -193,6 +193,15 @@ export function reconcileBuildOsState(
       });
     }
 
+    if (parsed.review.acceptedHeadMalformed) {
+      warnings.push({
+        code: "ACCEPTED_HEAD_MALFORMED",
+        workstreamId,
+        message: `${workstreamId} has an Accepted head that is not a full 40-character SHA. An abbreviation cannot prove which commit was accepted, so it is treated as absent.`,
+        sources: [fileSource],
+      });
+    }
+
     // An approval that names no commit proves nothing about the code.
     for (const record of parsed.review.records) {
       if (isApprovingVerdict(record.verdict) && !record.reviewedHead) {

@@ -13,6 +13,7 @@ import type {
   DecisionRecord,
   FollowedProject,
   IntegrityWarning,
+  OperatingMode,
   ProjectState,
   PullRequestState,
   SessionState,
@@ -78,7 +79,7 @@ export interface SyncResult {
    * persists projects stores this so the pin and its adoption date survive a restart; the CLI,
    * which detects for itself before calling, ignores it.
    */
-  detected?: { version?: string; adoptedAt?: string };
+  detected?: { version?: string; adoptedAt?: string; operatingMode?: OperatingMode };
 }
 
 async function loadBuildOsState(
@@ -88,7 +89,7 @@ async function loadBuildOsState(
   decisions: DecisionRecord[];
   warnings: IntegrityWarning[];
   conflicts: ProjectState["conflicts"];
-  detected: { version?: string; adoptedAt?: string };
+  detected: { version?: string; adoptedAt?: string; operatingMode?: OperatingMode };
 } | undefined> {
   const { project, github, now } = input;
   if (!project.buildOsDetected) return undefined;
@@ -108,9 +109,18 @@ async function loadBuildOsState(
    * not declare a version in its own header.
    */
   const instructions = await github.readFile(project.repositoryFullName, "CLAUDE.md");
+  /**
+   * Read only when there is no instructions file, so this costs one extra request for exactly
+   * the repositories that would otherwise have no framework block at all — canonical Build OS
+   * being the one that matters, since it keeps its block in `VERSION.md` and says so there.
+   */
+  const versionFile = instructions
+    ? undefined
+    : await github.readFile(project.repositoryFullName, "VERSION.md");
   const detection = detectBuildOs({
     paths: [...dirPaths, project.paths.activeWork],
     agentInstructions: instructions?.content,
+    versionFile: versionFile?.content,
     overrides: project.paths,
   });
   // Detection reads the repository; the stored value is a memory of an earlier read. Prefer what
@@ -155,7 +165,16 @@ async function loadBuildOsState(
     decisions,
     warnings: reconciled.warnings,
     conflicts: reconciled.conflicts,
-    detected: { version: buildOsVersion, adoptedAt: buildOsAdoptedAt },
+    /**
+     * The mode is not carried over from the stored project the way the pin is. It is cheap to
+     * read, it is a live fact about the repository, and a remembered `solo` outliving the
+     * declaration that produced it would keep a gate open that the project had closed.
+     */
+    detected: {
+      version: buildOsVersion,
+      adoptedAt: buildOsAdoptedAt,
+      operatingMode: detection.operatingMode,
+    },
   };
 }
 
@@ -277,6 +296,7 @@ export async function syncProject(input: SyncInput): Promise<SyncResult> {
     integrityWarnings: warnings,
     conflicts,
     buildOsAdoptedAt: detected?.adoptedAt ?? project.buildOsAdoptedAt,
+    operatingMode: detected?.operatingMode,
   });
 
   const attention = computeAttention({

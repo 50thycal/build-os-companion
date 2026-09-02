@@ -9,7 +9,7 @@
 <!-- Active · Paused · Blocked · Abandoned -->
 **Created:** YYYY-MM-DD
 **Updated:** YYYY-MM-DD
-**Build OS:** v0.5
+**Build OS:** v0.11
 <!-- The protocol this workstream runs under. Omit to inherit the project's adopted version.
      From v0.5 this is what puts the workstream under the merge gate — never the presence of the
      review fields below, which would make the gate escapable by deleting them. -->
@@ -80,6 +80,13 @@ None.
 
 <!--
 Verdict: Not started | In review | Changes required | Approved | Approved with follow-ups
+         | Owner-accepted
+
+Owner-accepted belongs to `solo` projects only — those declaring that no independent actor
+exists. It records that the OWNER accepted a change nobody else reviewed, names its head in
+`Accepted head` rather than `Reviewed head`, and is never counted as an approval. Only the
+owner writes it; an agent writing it would be approving its own work under another name.
+See framework/REVIEW_PROTOCOL.md -> Operating modes.
 Reviewed head: the full 40-character SHA of the last commit reviewed IN FULL, or — if none.
 An abbreviation is not accepted: it cannot prove which commit was reviewed.
 Reviewed PR: which PR this verdict is about. Omit when the workstream has one PR.
@@ -92,6 +99,12 @@ re-review the new head.
 A finalization commit cannot contain its own SHA, so Reviewed head never names it. Keep the
 last fully-reviewed head here, set Finalization: pushed, and let the reviewer record the final
 head on the PR itself.
+
+A finalization commit NEVER writes a verdict it does not yet have. The reviewer records it
+afterwards (`reviewed` mode), or the owner records it at merge (`solo` mode) — either way, after
+the commit exists. Leave the verdict at whatever is true when you write it, exactly as you leave
+Reviewed head at the last head reviewed in full. A row briefly behind is a far smaller problem
+than a row confidently wrong, and only one of the two can be spotted by reading it.
 
 A workstream spanning several PRs uses one row per PR instead of the fields above — a verdict
 never applies to a PR it does not name:

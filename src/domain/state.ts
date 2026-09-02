@@ -88,6 +88,27 @@ export interface PullRequestState {
    */
   approvedHeadShas: string[];
   /**
+   * Owner acceptances recorded on the PR as comment verdicts (v0.8).
+   *
+   * Deliberately **not** merged into `approvedHeadShas`. An acceptance is evidence that the owner
+   * took responsibility for work nobody reviewed; folding it in would make every existing check
+   * read it as a review, which is the one thing the verdict exists to prevent. Whether it can
+   * clear a gate is the review gate's question, because only there is the project's operating
+   * mode known.
+   */
+  ownerAcceptances: OwnerAcceptance[];
+  /**
+   * How many current review positions of any kind this PR carries — reviews and comment verdicts
+   * together, approving or objecting, gate-clearing or not.
+   *
+   * Exists for one question: does anything outside the workstream file record a verdict at all?
+   * A count of *any* position rather than of matching ones is deliberate. A real approval that
+   * cannot clear the gate — one naming no actor, say — is still evidence that a review happened,
+   * and calling the file's claim unsupported because of it would be a serious accusation made on
+   * a technicality.
+   */
+  recordedPositions: number;
+  /**
    * Reviewers whose current position is `Changes required`. While this is non-empty the gate is
    * closed — one reviewer's approval never cancels another's outstanding objection.
    */
@@ -156,18 +177,84 @@ export function objectionLabel(objection: Objection): string {
     : `${objection.actor} (via ${objection.author})`;
 }
 
+/**
+ * Whether an independent actor exists to review this project's work (Build OS v0.8).
+ *
+ * `reviewed` is the default and what an absent declaration means. `solo` is a project stating
+ * that it has no second party — one person, one identity, one agent — so acceptance comes from
+ * the owner instead of a reviewer. It is a disclosure, not a licence: a `solo` project still
+ * records who accepted what at which commit, and never describes accepted work as reviewed.
+ *
+ * **Declared, never inferred.** A project is not `solo` because its PRs happen to lack reviews.
+ */
+/**
+ * The owner accepting a change no independent party reviewed, as recorded on a pull request.
+ *
+ * Carries its prose because a **relayed** acceptance — one an agent transcribed from a decision
+ * the owner gave elsewhere — is identical in every field to one the owner posted, and differs
+ * only in those words. Dropping them would leave the two indistinguishable, which is precisely
+ * the distinction the relay form was written to preserve.
+ */
+export interface OwnerAcceptance {
+  /** The GitHub account that carried it. Transport, never identity. */
+  author: string;
+  /** Who accepted, as the comment declared. Absent means the acceptance cannot clear a gate. */
+  actor?: string;
+  /** Lowercased full SHA the acceptance named, from its own `Accepted head:` field. */
+  head?: string;
+  /** What the comment said beneath the fields — where a relay discloses that it is one. */
+  note?: string;
+  at: string;
+}
+
+export const OPERATING_MODES = ["reviewed", "solo"] as const;
+export type OperatingMode = (typeof OPERATING_MODES)[number];
+
+export function normalizeOperatingMode(text: string | undefined): OperatingMode | undefined {
+  if (text === undefined) return undefined;
+  const cleaned = text.replace(/[*`]/g, "").trim().toLowerCase();
+  return (OPERATING_MODES as readonly string[]).includes(cleaned)
+    ? (cleaned as OperatingMode)
+    : undefined;
+}
+
 export const REVIEW_VERDICTS = [
   "NOT_STARTED",
   "IN_REVIEW",
   "CHANGES_REQUIRED",
   "APPROVED",
   "APPROVED_WITH_FOLLOW_UPS",
+  /**
+   * v0.8. The owner accepted work that **no independent party reviewed**, in a project that has
+   * declared no independent party exists. That is a true statement and a much weaker one than
+   * `APPROVED`, which is why it is a verdict of its own rather than a flag on that one.
+   */
+  "OWNER_ACCEPTED",
 ] as const;
 export type ReviewVerdict = (typeof REVIEW_VERDICTS)[number];
 
-/** `Approved with follow-ups` clears the merge gate exactly as `Approved` does. */
+/**
+ * `Approved with follow-ups` clears the merge gate exactly as `Approved` does.
+ *
+ * `Owner-accepted` deliberately does **not**, and this is the function that keeps it out. The
+ * parse contract is explicit: a consumer must never treat an acceptance as an approval, because
+ * ranking them together or letting one satisfy a check written for the other destroys the only
+ * distinction the verdict carries. Where an acceptance may stand in for an approval — the merge
+ * gate of a project operating in `solo` mode — the caller asks the other question below.
+ */
 export function isApprovingVerdict(verdict: ReviewVerdict | undefined): boolean {
   return verdict === "APPROVED" || verdict === "APPROVED_WITH_FOLLOW_UPS";
+}
+
+/**
+ * Verdicts that can let a PR merge **in a `solo` project**: an approval, or the owner accepting.
+ *
+ * Only ever correct behind an explicit `solo` check. In a `reviewed` project an `Owner-accepted`
+ * is a contradiction to report, not a gate to open — the mode says a reviewer was available, so
+ * their absence is a missing review rather than a substitute for one.
+ */
+export function isAcceptingVerdict(verdict: ReviewVerdict | undefined): boolean {
+  return isApprovingVerdict(verdict) || verdict === "OWNER_ACCEPTED";
 }
 
 /**
@@ -189,6 +276,15 @@ export interface ReviewRecord {
    * finalization commit's own SHA — a commit cannot contain its own identity.
    */
   reviewedHead?: string;
+  /**
+   * The head an `Owner-accepted` verdict names (v0.8).
+   *
+   * A **separate field** from `reviewedHead`, and deliberately so: nothing was reviewed, so
+   * borrowing the reviewed field would erase the distinction the verdict exists to preserve —
+   * and would silently turn every acceptance into an approval for any check that reads only the
+   * one field. Same format rules; an abbreviation proves nothing here either.
+   */
+  acceptedHead?: string;
   /**
    * The workstream declares the documentation-only merge-finalization commit pushed. The head
    * is then expected to be ahead of `reviewedHead`, and the final head is verified on the PR
@@ -355,6 +451,10 @@ export type IntegrityCode =
   | "REVIEW_VERDICT_MALFORMED"
   | "REVIEWED_HEAD_MALFORMED"
   | "APPROVED_WITHOUT_REVIEWED_HEAD"
+  // v0.8 operating modes, v0.10 unsupported verdicts
+  | "ACCEPTED_HEAD_MALFORMED"
+  | "OWNER_ACCEPTED_IN_REVIEWED_MODE"
+  | "VERDICT_UNSUPPORTED"
   | "REVIEW_STALE"
   | "MERGED_WITHOUT_APPROVAL"
   | "WORKSTREAM_PR_STATE_MISMATCH"
@@ -383,6 +483,15 @@ export function integritySeverity(code: IntegrityCode): "HIGH" | "MEDIUM" | "LOW
     // The v0.5 gate was breached, or its evidence cannot be trusted. Nothing outranks this.
     case "MERGED_WITHOUT_APPROVAL":
     case "REVIEW_EVIDENCE_MUTATED":
+    /**
+     * The durable record claims a verdict that nothing outside it records.
+     *
+     * As serious as mutated evidence and for the same reason: the file is asserting a review
+     * that may never have happened. Its commonest cause is a finalization commit pre-writing the
+     * verdict it expected to receive, which the protocol forbids precisely because the value
+     * then survives whether or not the review it anticipates ever arrives.
+     */
+    case "VERDICT_UNSUPPORTED":
       return "HIGH";
     // The two layers disagree, or the gate is open and unsatisfied.
     case "WORKSTREAM_PR_STATE_MISMATCH":
@@ -392,6 +501,9 @@ export function integritySeverity(code: IntegrityCode): "HIGH" | "MEDIUM" | "LOW
     case "FINAL_HEAD_UNVERIFIED":
     case "REVIEW_RECORD_MISSING":
     case "APPROVED_WITHOUT_REVIEWED_HEAD":
+    // The project says a reviewer was available and the record says the owner accepted instead.
+    // Treated as a missing review, which is what it is.
+    case "OWNER_ACCEPTED_IN_REVIEWED_MODE":
       return "MEDIUM";
     // One source being untidy about itself.
     default:

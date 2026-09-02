@@ -37,6 +37,7 @@
  */
 
 import {
+  isAcceptingVerdict,
   isApprovingVerdict,
   objectionLabel,
   participatesInReviewGate,
@@ -44,6 +45,7 @@ import {
 } from "../domain/state.ts";
 import type {
   IntegrityWarning,
+  OperatingMode,
   PullRequestState,
   ReviewRecord,
   WorkstreamState,
@@ -57,12 +59,26 @@ function shortSha(sha: string): string {
 }
 
 /**
- * True when an approval that is still a reviewer's current position names this exact commit, and
- * no reviewer has an outstanding changes request. Both halves matter: a withdrawn approval is not
- * evidence, and someone else's objection outranks anyone's approval.
+ * True when a current position on the PR verifies this exact commit, and nobody objects.
+ *
+ * Both halves matter: a withdrawn approval is not evidence, and someone else's objection outranks
+ * anyone's approval. What counts as verification depends on the mode — an approving review in a
+ * `reviewed` project, and in a `solo` one the owner's acceptance as well.
  */
-function currentlyApprovedOnGitHub(pr: PullRequestState, sha: string): boolean {
-  return pr.changesRequestedBy.length === 0 && pr.approvedHeadShas.includes(sha);
+function currentHeadVerifiedOnGitHub(
+  pr: PullRequestState,
+  sha: string,
+  options: ReviewGateOptions,
+): boolean {
+  if (pr.changesRequestedBy.length > 0) return false;
+  if (pr.approvedHeadShas.includes(sha)) return true;
+  /**
+   * In a `solo` project the owner's acceptance is what verifies the final head, because the
+   * approving review this otherwise waits for is precisely the artifact such a project has
+   * declared it cannot produce. Requiring it there would leave the check permanently unsatisfied
+   * — a finding that can never be cleared teaches its reader to ignore the whole class.
+   */
+  return isSolo(options) && pr.ownerAcceptances.some((acceptance) => acceptance.head === sha);
 }
 
 /**
@@ -88,6 +104,23 @@ export interface ReviewGateOptions {
    * already settled — see `expectsRecord`.
    */
   adoptedAt?: string;
+  /**
+   * The project's declared operating mode (Build OS v0.8). Absent means it declares none, which
+   * the parse contract reads as `reviewed` — the stricter of the two, and the safe default for a
+   * project that has never considered the question.
+   */
+  operatingMode?: OperatingMode;
+}
+
+/**
+ * Is this a project that has declared it has no independent reviewer?
+ *
+ * Only a declaration counts. A project is never `solo` because its pull requests happen to carry
+ * no reviews — that is the shape of an unreviewed `reviewed` project, and reading it as `solo`
+ * would silently excuse exactly the thing the gate exists to report.
+ */
+function isSolo(options: ReviewGateOptions): boolean {
+  return options.operatingMode === "solo";
 }
 
 /**
@@ -173,9 +206,9 @@ export function checkReviewGate(
 
       const record = reviewRecordFor(ws.reviewRecords, pr.number);
       if (record) {
-        warnings.push(...checkRecord(ws, pr, record));
+        warnings.push(...checkRecord(ws, pr, record, options));
       } else if (expectsRecord(ws, pr, options)) {
-        warnings.push(...checkMissingRecord(ws, pr));
+        warnings.push(...checkMissingRecord(ws, pr, options));
       }
       // Otherwise this PR is outside the gate — pre-adoption work, a finished workstream, or one
       // that never reached a Build Card. It makes no claim about this PR and neither do we.
@@ -187,7 +220,11 @@ export function checkReviewGate(
   return warnings;
 }
 
-function checkMissingRecord(ws: WorkstreamState, pr: PullRequestState): IntegrityWarning[] {
+function checkMissingRecord(
+  ws: WorkstreamState,
+  pr: PullRequestState,
+  options: ReviewGateOptions,
+): IntegrityWarning[] {
   const sources = [ws.source, pr.source];
 
   if (pr.lifecycle === "MERGED") {
@@ -197,8 +234,9 @@ function checkMissingRecord(ws: WorkstreamState, pr: PullRequestState): Integrit
         workstreamId: ws.workstreamId,
         message:
           `PR #${pr.number} is merged and ${ws.workstreamId} records no verdict for it. Under ` +
-          `Build OS ${ws.protocolVersion ?? "v0.5"} a significant PR merges only on an approved ` +
-          `verdict naming its merged head.`,
+          `Build OS ${ws.protocolVersion ?? "v0.5"} a significant PR merges only on ` +
+          `${isSolo(options) ? "an approved verdict or a recorded Owner-accepted" : "an approved verdict"} ` +
+          `naming its merged head. Declaring solo replaces the reviewer, not the record.`,
         sources,
       },
     ];
@@ -223,15 +261,73 @@ function checkRecord(
   ws: WorkstreamState,
   pr: PullRequestState,
   record: ReviewRecord,
+  options: ReviewGateOptions,
 ): IntegrityWarning[] {
   const warnings: IntegrityWarning[] = [];
   const sources = [ws.source, pr.source];
-  const approved = isApprovingVerdict(record.verdict);
-  const headMatches = record.reviewedHead === pr.headSha;
+  const solo = isSolo(options);
+  const ownerAccepted = record.verdict === "OWNER_ACCEPTED";
+
+  /**
+   * The mode says an independent actor was available and the record says the owner accepted
+   * instead. That is a missing review, not a substitute for one — so it is reported here *and*
+   * the verdict clears nothing below, which is what makes this finding mean something rather
+   * than sit alongside a gate it did not affect.
+   */
+  if (ownerAccepted && !solo) {
+    warnings.push({
+      code: "OWNER_ACCEPTED_IN_REVIEWED_MODE",
+      workstreamId: ws.workstreamId,
+      message:
+        `${ws.workstreamId} records Owner-accepted for PR #${pr.number}, but the project ` +
+        `${options.operatingMode ? `declares operating mode ${options.operatingMode}` : "declares no operating mode, which means reviewed"}. ` +
+        `An acceptance is not an approval. Either get the review the mode says is available, or ` +
+        `declare the project solo if no independent reviewer genuinely exists.`,
+      sources,
+    });
+  }
+
+  /**
+   * The file claims a verdict and the pull request records none at all.
+   *
+   * This is `DEC-023`'s failure made visible: a merge-finalization commit that pre-wrote the
+   * value it expected to receive. Because the commit lands before the verdict it anticipates,
+   * the claim survives whether or not that verdict ever arrives — and from inside the file it
+   * looks identical either way. Only a consumer holding both sides can tell them apart.
+   *
+   * Deliberately narrow: it fires only when the PR carries **no** position of any kind, so a
+   * real verdict that merely fails to clear the gate is never called a fabrication.
+   */
+  if (isAcceptingVerdict(record.verdict) && pr.recordedPositions === 0) {
+    warnings.push({
+      code: "VERDICT_UNSUPPORTED",
+      workstreamId: ws.workstreamId,
+      message:
+        `${ws.workstreamId} records ${record.verdict} for PR #${pr.number}, but that PR carries no ` +
+        `review, comment verdict, or acceptance at all. The file is the only place this verdict ` +
+        `exists. The usual cause is a finalization commit that wrote the verdict it expected ` +
+        `rather than one it had.`,
+      sources,
+    });
+  }
+
+  /**
+   * What this record can open, given the mode. In `solo` an acceptance stands where an approval
+   * would; in `reviewed` it stands nowhere at all.
+   */
+  const clears = solo ? isAcceptingVerdict(record.verdict) : isApprovingVerdict(record.verdict);
+  /**
+   * An acceptance names its commit in its own field. Reading `reviewedHead` for it would be the
+   * conflation v0.8 exists to prevent, and would quietly pass an acceptance whose own field was
+   * never filled in.
+   */
+  const gateHead = ownerAccepted ? record.acceptedHead : record.reviewedHead;
+  const headMatches = gateHead !== undefined && gateHead === pr.headSha;
 
   // A reviewer's outstanding objection on GitHub, against a workstream that says the work is
-  // approved, is exactly the kind of contradiction this layer exists to surface.
-  if (approved && pr.changesRequestedBy.length > 0) {
+  // approved, is exactly the kind of contradiction this layer exists to surface. An acceptance
+  // is a current position like any other, so an objection outranks it too.
+  if (clears && pr.changesRequestedBy.length > 0) {
     warnings.push({
       code: "WORKSTREAM_PR_STATE_MISMATCH",
       workstreamId: ws.workstreamId,
@@ -247,7 +343,7 @@ function checkRecord(
   // Finalization is only reachable from an approved record: it is the commit pushed *after*
   // approval and before merge. Declared without one, it is a step taken out of order — and it
   // must not be a way to reach the GitHub-evidence path that clears the final-head check.
-  if (record.finalized && !approved) {
+  if (record.finalized && !clears && !solo) {
     warnings.push({
       code: "WORKSTREAM_PR_STATE_MISMATCH",
       workstreamId: ws.workstreamId,
@@ -258,20 +354,22 @@ function checkRecord(
     });
   }
 
-  if (approved && record.reviewedHead && !headMatches) {
+  if (clears && gateHead && !headMatches) {
     if (record.finalized) {
       // Expected divergence: the finalization commit moved the head past the reviewed one, and
       // by construction it could not name itself. The one thing GitHub evidence may clear: an
       // approval that is a reviewer's current position, naming the head that commit produced.
-      if (currentlyApprovedOnGitHub(pr, pr.headSha)) return warnings;
+      if (currentHeadVerifiedOnGitHub(pr, pr.headSha, options)) return warnings;
 
       warnings.push({
         code: "FINAL_HEAD_UNVERIFIED",
         workstreamId: ws.workstreamId,
         message:
-          `${ws.workstreamId} declares the finalization commit pushed on PR #${pr.number}, but no ` +
-          `approving review names its current head ${shortSha(pr.headSha)}. The full review covered ` +
-          `${shortSha(record.reviewedHead)}; the final head still needs verifying on the PR.`,
+          `${ws.workstreamId} declares the finalization commit pushed on PR #${pr.number}, but ` +
+          `${solo ? "neither an approving review nor an acceptance names" : "no approving review names"} ` +
+          `its current head ${shortSha(pr.headSha)}. The full ${ownerAccepted ? "acceptance" : "review"} ` +
+          `covered ${shortSha(gateHead)}; the final head still needs ` +
+          `${solo ? "accepting" : "verifying"} on the PR.`,
         sources,
       });
     } else if (LIVE.has(pr.lifecycle)) {
@@ -279,8 +377,10 @@ function checkRecord(
         code: "REVIEW_STALE",
         workstreamId: ws.workstreamId,
         message:
-          `${ws.workstreamId} approved ${shortSha(record.reviewedHead)} but PR #${pr.number} is now at ` +
-          `${shortSha(pr.headSha)}. The approval is against an older commit; re-review the current head.`,
+          `${ws.workstreamId} ${ownerAccepted ? "accepted" : "approved"} ${shortSha(gateHead)} but PR ` +
+          `#${pr.number} is now at ${shortSha(pr.headSha)}. The ` +
+          `${ownerAccepted ? "acceptance" : "approval"} is against an older commit; ` +
+          `${ownerAccepted ? "accept" : "re-review"} the current head.`,
         sources,
       });
     } else if (pr.lifecycle === "MERGED") {
@@ -288,20 +388,23 @@ function checkRecord(
         code: "MERGED_WITHOUT_APPROVAL",
         workstreamId: ws.workstreamId,
         message:
-          `PR #${pr.number} merged at ${shortSha(pr.headSha)}, but ${ws.workstreamId} only approved ` +
-          `${shortSha(record.reviewedHead)}. The merged commit was never reviewed.`,
+          `PR #${pr.number} merged at ${shortSha(pr.headSha)}, but ${ws.workstreamId} only ` +
+          `${ownerAccepted ? "accepted" : "approved"} ${shortSha(gateHead)}. The merged commit was ` +
+          `never ${ownerAccepted ? "accepted" : "reviewed"}.`,
         sources,
       });
     }
   }
 
-  if (!approved && pr.lifecycle === "MERGED") {
+  if (!clears && pr.lifecycle === "MERGED") {
     warnings.push({
       code: "MERGED_WITHOUT_APPROVAL",
       workstreamId: ws.workstreamId,
       message:
         `PR #${pr.number} is merged while ${ws.workstreamId} records verdict ` +
-        `${record.verdict ?? "none"}. Merge requires an approved verdict naming the merged head.`,
+        `${record.verdict ?? "none"}. Merge requires ` +
+        `${solo ? "an approved verdict or the owner's acceptance" : "an approved verdict"} naming ` +
+        `the merged head.`,
       sources,
     });
   }

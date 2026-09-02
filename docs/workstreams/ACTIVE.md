@@ -3,11 +3,12 @@
 <!-- The Companion's active-work control board. One line per workstream; anything needing a
      paragraph belongs in its file. -->
 
-**Updated:** 2026-08-28 · **Build OS v0.5**
+**Updated:** 2026-09-02 · **Build OS v0.11** · operating mode `solo`
 
-Adopted v0.5 on 2026-08-27; the declaration and the adoption boundary live in `CLAUDE.md`. The
-boundary keeps the *merge gate* off work that predates it — no verdict is demanded for `#1`,
-which merged before adoption.
+Adopted v0.11 on 2026-09-02, in `solo` mode (`COMP-001`); the declaration and the adoption
+boundary live in `CLAUDE.md`. The boundary keeps the *merge gate* off work that predates it — no
+verdict is demanded for `#1`, which merged before the original v0.5 adoption, and nothing merged
+under v0.5 is re-judged by v0.11.
 
 It does **not** silence the state-agreement check, and that check is currently right about this
 board: WS-001, WS-002, WS-003, WS-005 and WS-007 all say `REVIEW` while `#1`, the pull request
