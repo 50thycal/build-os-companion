@@ -7,6 +7,8 @@
  * into each other — in the field it names, in the verdict it is, or in the gate it opens.
  */
 
+import { readFileSync } from "node:fs";
+
 import { describe, expect, it } from "vitest";
 
 import { detectBuildOs } from "../src/ingest/buildos/detect.ts";
@@ -349,5 +351,27 @@ describe("a verdict the pull request has never heard of", () => {
     const ws = workstream({ reviewRecords: [record({ verdict: "IN_REVIEW", acceptedHead: undefined })] });
     const pr = pullRequest({ recordedPositions: 0, ownerAcceptances: [] });
     expect(codes(checkReviewGate([ws], [pr], SOLO))).not.toContain("VERDICT_UNSUPPORTED");
+  });
+});
+
+describe("this repository's own declaration", () => {
+  /**
+   * The mode line is load-bearing, not decoration. Reformat it and detection silently falls back
+   * to `reviewed`, at which point every acceptance recorded here starts being reported as
+   * `OWNER_ACCEPTED_IN_REVIEWED_MODE` — a failure that looks like a protocol violation rather
+   * than a typo. Reading the real file is the point: a fixture would not catch that.
+   */
+  const instructions = readFileSync(new URL("../CLAUDE.md", import.meta.url), "utf8");
+  const detected = detectBuildOs({ paths: ["docs/workstreams/ACTIVE.md"], agentInstructions: instructions });
+
+  it("declares solo mode in a shape detection actually reads", () => {
+    expect(detected.operatingMode).toBe("solo");
+  });
+
+  it("declares v0.11 with an adoption boundary", () => {
+    // The date is only trusted when it belongs to the version actually adopted, so this also
+    // catches the two lines drifting apart.
+    expect(detected.version).toBe("0.11");
+    expect(detected.adoptedAt).toBe("2026-09-02");
   });
 });
