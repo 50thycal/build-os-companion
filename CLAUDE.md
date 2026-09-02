@@ -5,7 +5,66 @@ This repository follows **Build OS**, the framework in
 first: it is the control board, and each row's file carries the detail.
 
 Adopted version: v0.5
-Last compatibility check: v0.5 on 2026-08-27
+Last compatibility check: v0.11 on 2026-09-02 — **six versions behind, and the vendored
+contracts have drifted.** See *Canonical is ahead* below before doing protocol work.
+
+## Canonical is ahead — v0.5 adopted, v0.11 released
+
+Checked 2026-09-02. This is not just a stale version line: **`npm run contracts:check` fails
+against canonical right now**, on both vendored entries.
+
+| Vendored file | `sha256` in `MANIFEST.json` | On canonical `main` |
+|---|---|---|
+| `agent-session-checkpoint.v1.schema.json` | `9001e808…be46` | `b70b62b1…35b3` |
+| `WORKSTREAM.template.md` | `36edf386…4a78` | `2407dba2…0c56` |
+
+Both moved for real reasons, and both bear directly on what this Companion parses:
+
+- **The checkpoint schema gained an optional `owner_result`** enum — `SHIP` / `DECISION` /
+  `BLOCKED` (v0.6). Absent in every checkpoint written before it, which is absent metadata
+  rather than an error.
+- **The workstream template gained the `Owner-accepted` verdict and an `Accepted head`
+  field** (v0.8, v0.10), plus the rule that a finalization commit never writes a verdict it
+  does not yet have.
+
+### What a migration has to include
+
+**Not just `contracts:sync`.** Syncing the hashes without touching
+`src/ingest/github/comment-verdict.ts` would leave the reader silently not understanding
+`Owner-accepted` or `Accepted head` — a parser that reports "no verdict" where one exists is
+worse than a check that fails loudly. `contracts/README.md` already says it: a contract change
+is a protocol change, and should be treated as one.
+
+The reader work, in rough order of size:
+
+1. **`Owner-accepted`** as a sixth verdict (v0.8), recorded in **`Accepted head:`** rather than
+   `Reviewed head:` — deliberately a different field, so an acceptance can never be read as an
+   approval. It clears the gate only in `solo` mode.
+2. **Operating modes** (v0.8): a project declares `reviewed` or `solo` in its framework block.
+   `Owner-accepted` on a `reviewed` project is `OWNER_ACCEPTED_IN_REVIEWED_MODE`.
+3. **`VERDICT_UNSUPPORTED`** (v0.10): a workstream claiming a verdict nothing outside it records.
+4. **Relayed acceptances** (v0.11): an agent may transcribe an acceptance the owner gave
+   elsewhere, and must name the channel. Parsed identically; the prose must not be normalised
+   away, because it is the whole difference between an authenticated verdict and a reported one.
+
+### The standing rule and `solo` mode overlap
+
+**Worth deciding deliberately at migration.** The *owner's merge is itself a verdict* rule below
+was invented here on 2026-08-28 for a single-account repository. v0.8 formalised that same
+situation upstream as **`solo` mode**, where the owner accepts at merge and it is recorded as
+`Owner-accepted`.
+
+They agree in spirit and differ in mechanism — the local rule reads the merge commit's second
+parent, `solo` mode expects a recorded acceptance. Adopting v0.8 without reconciling them would
+leave two rules for one situation, which is exactly the drift the vendoring discipline exists to
+prevent. Pick one, and say why in `docs/DECISIONS.md`.
+
+### Meanwhile
+
+The v0.5 pin is still honest and still covers current work — later versions do not reach back,
+and nothing already merged is retroactively judged. What is *not* honest is a green
+`contracts:check`, because it is not green. Treat a failure there as expected until this is
+migrated, and do not silence it by re-recording the hashes alone.
 
 ## What that date means
 
