@@ -16,7 +16,7 @@
  * choice stays reversible.
  */
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 /**
  * `seq` is the spine of the whole design.
@@ -113,4 +113,10 @@ export const MIGRATIONS: string[][] = [
     `ALTER TABLE projects ADD COLUMN discovery_evidence TEXT`,
     `ALTER TABLE projects ADD COLUMN discovered_at TEXT`,
   ],
+  // ---- v4 -----------------------------------------------------------------
+  // The owner's own "I've seen this" — distinct from `cleared_at`, which is the engine's own
+  // determination that a situation stopped being true. Conflating the two would let a dismissal
+  // masquerade as resolution: a badge count and a briefing that both read `cleared_at` would
+  // report an item as fixed when the owner had only agreed to stop being reminded of it.
+  [`ALTER TABLE attention_items ADD COLUMN dismissed_at TEXT`],
 ];

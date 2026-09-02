@@ -6,7 +6,7 @@
  */
 
 import type { AttentionItem, Severity } from "../domain/attention.ts";
-import { needsOwner } from "../domain/attention.ts";
+import { needsOwner, severityRank } from "../domain/attention.ts";
 import type {
   BuildOsPaths,
   DecisionRecord,
@@ -107,6 +107,7 @@ interface AttentionRow {
   last_seen_at: string;
   cleared_at: string | null;
   cleared_seq: number | null;
+  dismissed_at: string | null;
 }
 
 /** An attention item together with when it appeared and, if it has, when it stopped being true. */
@@ -116,6 +117,17 @@ export interface TrackedAttentionItem extends AttentionItem {
   lastSeenAt: string;
   clearedAt?: string;
   clearedSeq?: number;
+  /**
+   * When the owner said "I've seen this" — distinct from `clearedAt`, which is the deterministic
+   * engine's own determination that the situation stopped being true.
+   *
+   * A dismissed item that is still live keeps counting toward nothing: it is filtered out of
+   * `openAttention()` by default and does not inflate the `Needs Me` badge, but it is never
+   * deleted and it is never conflated with resolution — a briefing or an audit reading
+   * `clearedAt` must not be told a still-true situation went away because the owner stopped
+   * wanting to see it.
+   */
+  dismissedAt?: string;
 }
 
 function toAttention(row: AttentionRow): TrackedAttentionItem {
@@ -135,6 +147,7 @@ function toAttention(row: AttentionRow): TrackedAttentionItem {
     lastSeenAt: row.last_seen_at,
     clearedAt: row.cleared_at ?? undefined,
     clearedSeq: row.cleared_seq ?? undefined,
+    dismissedAt: row.dismissed_at ?? undefined,
   };
 }
 
@@ -332,29 +345,38 @@ export class CompanionStore {
         if (prior && !prior.clearedAt) {
           // Still true. Refresh the wording and severity, keep the clock running from when it
           // first appeared.
+          //
+          // A dismissal is not forever: it means "I've seen this at the severity it was", and a
+          // dismissed item that gets *worse* is materially new information the owner has not
+          // actually been told about. Worsening resurfaces it; anything else — unchanged, or
+          // even improved but still needing the owner — stays dismissed, because re-litigating
+          // a dismissal on every wording tweak is exactly the churn dismissal exists to stop.
+          const resurface = prior.dismissedAt && severityRank(item.severity) > severityRank(prior.severity);
           this.#db
             .prepare(
               `UPDATE attention_items SET severity = ?, reason_text = ?, recommended_action = ?,
-                 evidence_json = ?, last_seen_at = ? WHERE id = ?`,
+                 evidence_json = ?, last_seen_at = ?${resurface ? ", dismissed_at = NULL" : ""} WHERE id = ?`,
             )
             .run(item.severity, item.reasonText, item.recommendedAction, JSON.stringify(item.evidence), at, item.id);
           continue;
         }
 
         // New, or the same situation recurring after being resolved. Either way it is something
-        // the owner has not been told about, so the clock restarts.
+        // the owner has not been told about, so the clock restarts and any prior dismissal —
+        // which was a dismissal of the *previous* occurrence — does not carry over.
         this.#db
           .prepare(
             `INSERT INTO attention_items (
                id, project_id, entity_type, entity_id, severity, reason_code, reason_text,
                recommended_action, evidence_json, first_seen_at, first_seen_seq, last_seen_at,
-               cleared_at, cleared_seq
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
+               cleared_at, cleared_seq, dismissed_at
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)
              ON CONFLICT(id) DO UPDATE SET
                severity = excluded.severity, reason_text = excluded.reason_text,
                recommended_action = excluded.recommended_action, evidence_json = excluded.evidence_json,
                first_seen_at = excluded.first_seen_at, first_seen_seq = excluded.first_seen_seq,
-               last_seen_at = excluded.last_seen_at, cleared_at = NULL, cleared_seq = NULL`,
+               last_seen_at = excluded.last_seen_at, cleared_at = NULL, cleared_seq = NULL,
+               dismissed_at = NULL`,
           )
           .run(
             item.id,
@@ -387,20 +409,76 @@ export class CompanionStore {
     });
   }
 
-  /** Attention items that are currently true, most severe first. */
-  openAttention(projectId?: string): TrackedAttentionItem[] {
-    const where = projectId ? " AND project_id = ?" : "";
-    const params = projectId ? [projectId] : [];
+  /**
+   * Attention items that are currently true, most severe first.
+   *
+   * Dismissed items are excluded by default — this is what feeds the `Needs Me` badge and list,
+   * and a dismissal exists precisely so it stops counting there. Pass `includeDismissed` for the
+   * screen that has to be honest about them existing rather than pretending they don't.
+   */
+  openAttention(projectId?: string, options: { includeDismissed?: boolean } = {}): TrackedAttentionItem[] {
+    const clauses = ["cleared_at IS NULL"];
+    const params: string[] = [];
+    if (!options.includeDismissed) clauses.push("dismissed_at IS NULL");
+    if (projectId) {
+      clauses.push("project_id = ?");
+      params.push(projectId);
+    }
     return (
       this.#db
         .prepare(
-          `SELECT * FROM attention_items WHERE cleared_at IS NULL${where}
+          `SELECT * FROM attention_items WHERE ${clauses.join(" AND ")}
            ORDER BY CASE severity
              WHEN 'CRITICAL' THEN 0 WHEN 'HIGH' THEN 1 WHEN 'MEDIUM' THEN 2
              WHEN 'LOW' THEN 3 ELSE 4 END, first_seen_at ASC, id ASC`,
         )
         .all(...params) as unknown as AttentionRow[]
     ).map(toAttention);
+  }
+
+  /**
+   * Only the items dismissed but still live — still true, just no longer counted or listed by
+   * default. Never includes a resolved item: once the engine has cleared something there is
+   * nothing left to dismiss it *from*.
+   */
+  dismissedAttention(projectId?: string): TrackedAttentionItem[] {
+    const where = projectId ? " AND project_id = ?" : "";
+    const params = projectId ? [projectId] : [];
+    return (
+      this.#db
+        .prepare(
+          `SELECT * FROM attention_items WHERE cleared_at IS NULL AND dismissed_at IS NOT NULL${where}
+           ORDER BY dismissed_at DESC`,
+        )
+        .all(...params) as unknown as AttentionRow[]
+    ).map(toAttention);
+  }
+
+  /**
+   * The owner saying "I've seen this." Only a currently-open item can be dismissed — one already
+   * resolved has nothing left to dismiss, and dismissing it would create a record that looks like
+   * it matters but can never be un-dismissed into anything, since the engine will never emit it
+   * again to resurface it.
+   */
+  dismissAttention(id: string, at: string): TrackedAttentionItem | undefined {
+    this.#db
+      .prepare(
+        `UPDATE attention_items SET dismissed_at = ? WHERE id = ? AND cleared_at IS NULL AND dismissed_at IS NULL`,
+      )
+      .run(at, id);
+    const row = this.#db.prepare("SELECT * FROM attention_items WHERE id = ?").get(id) as
+      | AttentionRow
+      | undefined;
+    return row ? toAttention(row) : undefined;
+  }
+
+  /** Reverses a dismissal. The item was never hidden from `dismissedAttention`, only from the default list. */
+  undismissAttention(id: string): TrackedAttentionItem | undefined {
+    this.#db.prepare(`UPDATE attention_items SET dismissed_at = NULL WHERE id = ?`).run(id);
+    const row = this.#db.prepare("SELECT * FROM attention_items WHERE id = ?").get(id) as
+      | AttentionRow
+      | undefined;
+    return row ? toAttention(row) : undefined;
   }
 
   /**

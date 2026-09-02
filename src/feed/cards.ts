@@ -333,26 +333,23 @@ export function buildFeed(input: FeedInput): FeedCard[] {
     });
   }
 
-  return rankFeed(cards, input.now);
+  return rankFeed(cards);
 }
 
 /**
- * Ranking is a blend, not pure chronology: what needs the owner comes first, then significance,
- * then recency. A three-day-old blocking decision outranks a green CI run from a minute ago.
+ * Ranking is pure chronology: newest first. What changed, most recently, is the entire question
+ * this screen answers — "what's new" — and a card's severity is shown on it, not used to jump it
+ * ahead of things that happened more recently.
+ *
+ * This used to blend severity into the score, weighted heavily enough that a HIGH-severity card
+ * from days ago permanently outranked anything that happened since — a week-old blocked
+ * workstream sat pinned above this morning's merge, every time the owner opened the Feed. That
+ * blend belongs to `Needs Me` (`src/attention/engine.ts`'s `needsMe`), which exists specifically
+ * to rank by what needs the owner. Doing it here too meant the Feed and Needs Me answered the
+ * same question in the same order instead of two different questions.
  */
-export function rankFeed(cards: FeedCard[], now: Date): FeedCard[] {
-  const scored = cards.map((card) => {
-    const ageHours = Math.max(
-      0,
-      (now.getTime() - new Date(card.occurredAt).getTime()) / 3_600_000,
-    );
-    const recency = Math.max(0, 40 - ageHours);
-    const rank = severityRank(card.severity) * 4 + recency;
-    return { ...card, rank: Math.round(rank * 100) / 100 };
-  });
-
-  return scored.sort((a, b) => {
-    if (b.rank !== a.rank) return b.rank - a.rank;
-    return b.occurredAt.localeCompare(a.occurredAt) || a.id.localeCompare(b.id);
-  });
+export function rankFeed(cards: FeedCard[]): FeedCard[] {
+  return [...cards]
+    .sort((a, b) => b.occurredAt.localeCompare(a.occurredAt) || a.id.localeCompare(b.id))
+    .map((card, index) => ({ ...card, rank: cards.length - index }));
 }

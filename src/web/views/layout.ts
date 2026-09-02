@@ -83,6 +83,10 @@ main { padding: 14px 16px 24px; max-width: 720px; margin: 0 auto; }
 .row .value { color: var(--text); }
 .row.needs .value { color: var(--high); font-weight: 500; }
 .muted { color: var(--muted); }
+.more > summary {
+  cursor: pointer; font-size: 13px; color: var(--muted); padding: 8px 2px;
+  min-height: 44px; display: flex; align-items: center;
+}
 
 .badge {
   display: inline-block; padding: 2px 8px; border-radius: 999px;
