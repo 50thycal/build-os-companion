@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import { syncProject } from "../src/sync/sync-project.ts";
 import { InMemoryEventLedger } from "../src/ledger/ledger.ts";
-import { GitHubApiError } from "../src/ingest/github/client.ts";
+import { GitHubApiError, type GitHubPort } from "../src/ingest/github/client.ts";
 import { FixtureGitHub, observation, testProject } from "./helpers.ts";
 import { validateCheckpoint } from "../src/ingest/checkpoint/validate.ts";
 import { toSessionState } from "../src/ingest/checkpoint/normalize.ts";
@@ -89,6 +89,54 @@ describe("sync cycle", () => {
     expect(failed.state.pullRequests).toHaveLength(good.state.pullRequests.length);
     expect(failed.appended.map((e) => e.eventType)).toContain("SYNC_FAILED");
     expect(failed.attention.some((a) => a.reasonCode === "SYNC_FAILING")).toBe(true);
+  });
+
+  /**
+   * A repository whose pull-request data GitHub answers fine but whose Build OS artifacts a
+   * cycle cannot read or parse.
+   *
+   * This reproduces a real production defect: `loadBuildOsState` was not wrapped the way
+   * `observe()` is, so a non-404 error reading `ACTIVE.md`, a workstream file, or `CLAUDE.md`
+   * propagated out of the whole cycle. The pull-request events from `observe()` had already been
+   * appended to the ledger a moment earlier, but `buildProjectState` never ran to project them
+   * into `state.pullRequests` — so the Feed showed a card with a real headline ("PR #20 merged: …")
+   * and `Where it stands: No current state recorded.`, while the project carried a `last sync
+   * failed` badge even though GitHub itself was never unreachable.
+   */
+  it("keeps pull-request state current when only the Build OS read fails", async () => {
+    const ledger = new InMemoryEventLedger();
+    const good = new FixtureGitHub([observation(1)]);
+    const brokenBuildOs: GitHubPort = {
+      observe: (repo, options) => good.observe(repo, options),
+      listPaths: (repo, directory) => good.listPaths(repo, directory),
+      readFile: (repo, path) => {
+        if (path.endsWith("ACTIVE.md")) throw new GitHubApiError("500 Internal Server Error", 500);
+        return good.readFile(repo, path);
+      },
+    };
+
+    const result = await syncProject({
+      project: testProject(),
+      github: brokenBuildOs,
+      ledger,
+      ownerLogin: OWNER,
+      now: NOW,
+    });
+
+    // The whole cycle is not a failure: GitHub answered, and that is what `syncFailed` reports.
+    expect(result.syncFailed).toBeUndefined();
+    // The fact this bug destroyed: pull requests still project from the events that did arrive.
+    expect(result.state.pullRequests).toHaveLength(3);
+    const pullRequestCards = result.cards.filter((c) => c.entityType === "PULL_REQUEST");
+    expect(pullRequestCards.length).toBeGreaterThan(0);
+    expect(pullRequestCards.every((c) => c.currentState !== "No current state recorded.")).toBe(true);
+    // The failure is not swallowed either — it is visible as its own event, distinct from a
+    // GitHub-reachability failure, so a repeated one is diagnosable.
+    const failure = result.appended.find(
+      (e) => e.eventType === "SYNC_FAILED" && e.summaryShort.includes("Build OS"),
+    );
+    expect(failure).toBeDefined();
+    expect(failure!.summaryShort).toContain("500");
   });
 
   it("shows an agent's claim and GitHub's state separately when they disagree", async () => {
