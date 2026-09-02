@@ -113,7 +113,7 @@ None yet.
 
 ## Related PRs
 
-Opened from this build; filled in once the PR number is known.
+- [#18](https://github.com/50thycal/build-os-companion/pull/18) — the two script types, `CompanionApp` wiring, routes, and this unblock
 
 ## Next Step
 
