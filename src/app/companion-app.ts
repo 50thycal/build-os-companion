@@ -109,8 +109,8 @@ export class CompanionApp {
    *
    * Built by the existing `buildFeed` from persisted events and persisted state — the same
    * function the CLI and the tests use. Cards are assembled per project because a card names
-   * its project, then re-ranked together so the most important thing across everything the
-   * owner follows is at the top.
+   * its project, then re-ranked together so cards from every followed project interleave by
+   * recency — what's new, not what's urgent. Urgency is `Needs Me`'s question, not this one.
    */
   feed(options: { projectId?: string; limit?: number } = {}): FeedCard[] {
     const now = this.now();
@@ -134,7 +134,7 @@ export class CompanionApp {
       );
     }
 
-    const ranked = rankFeed(cards, now);
+    const ranked = rankFeed(cards);
     return options.limit ? ranked.slice(0, options.limit) : ranked;
   }
 
@@ -150,6 +150,24 @@ export class CompanionApp {
    */
   needsMe(projectId?: string): TrackedAttentionItem[] {
     return this.#store.openAttention(projectId);
+  }
+
+  /** Items the owner has dismissed but are still live — hidden from `needsMe`, never deleted. */
+  dismissed(projectId?: string): TrackedAttentionItem[] {
+    return this.#store.dismissedAttention(projectId);
+  }
+
+  /**
+   * The owner saying "I've seen this." Returns `undefined` for an id that does not exist or is
+   * already resolved/dismissed, so the caller can tell a no-op from a real dismissal.
+   */
+  dismiss(id: string): TrackedAttentionItem | undefined {
+    return this.#store.dismissAttention(id, this.now().toISOString());
+  }
+
+  /** Reverses a dismissal, bringing the item back into `needsMe` and its badge count. */
+  undismiss(id: string): TrackedAttentionItem | undefined {
+    return this.#store.undismissAttention(id);
   }
 
   /** The events behind an attention item's entity, so a classification can be inspected. */

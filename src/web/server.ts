@@ -11,6 +11,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 
 import type { CompanionApp } from "../app/companion-app.ts";
+import type { TrackedAttentionItem } from "../store/store.ts";
 import {
   LoginThrottle,
   SESSION_COOKIE,
@@ -234,6 +235,24 @@ async function handle(
       return;
     }
 
+    // "I've seen this" — never "this is fixed". See the doc comment on `attentionCard` in
+    // needs-me.ts for what a dismissal does and does not claim, and why it can resurface on
+    // its own. A missing or already-settled id is silently a no-op: the redirect back to the
+    // screen that is now correct either way is answer enough.
+    const dismissMatch = /^\/needs-me\/([^/]+)\/dismiss$/.exec(path);
+    if (dismissMatch) {
+      app.dismiss(dismissMatch[1]!);
+      redirect(res, "/needs-me");
+      return;
+    }
+
+    const undismissMatch = /^\/needs-me\/([^/]+)\/undismiss$/.exec(path);
+    if (undismissMatch) {
+      app.undismiss(undismissMatch[1]!);
+      redirect(res, "/needs-me");
+      return;
+    }
+
     send(res, 405, layout({ title: "Not allowed", tab: "feed", body: "<div class='empty'>Method not allowed.</div>" }));
     return;
   }
@@ -265,11 +284,13 @@ async function handle(
 
   if (path === "/needs-me") {
     const projects = new Map(app.projects().map((p) => [p.id, p.displayName ?? p.repositoryFullName]));
-    const entries: NeedsMeItem[] = app.needsMe().map((item) => ({
+    const toEntry = (item: TrackedAttentionItem): NeedsMeItem => ({
       item,
       projectName: projects.get(item.projectId) ?? item.projectId,
       evidence: app.evidenceFor(item, 6),
-    }));
+    });
+    const entries = app.needsMe().map(toEntry);
+    const dismissedEntries = app.dismissed().map(toEntry);
 
     const lastSynced = app.projects().map((p) => p.lastSyncedAt).filter(Boolean).sort().at(-1);
 
@@ -282,7 +303,7 @@ async function handle(
         tab: "needs",
         needsCount,
         signOut,
-        body: needsMeView(entries, now, lastSynced as string | undefined),
+        body: needsMeView(entries, now, lastSynced as string | undefined, dismissedEntries),
       }),
     );
     return;
