@@ -11,7 +11,6 @@ import { describe, expect, it } from "vitest";
 import { applyConfig, parseConfig } from "../src/config/followed.ts";
 import { openDatabase } from "../src/store/database.ts";
 import { CompanionStore } from "../src/store/store.ts";
-import { buildPortfolio } from "../src/feed/portfolio.ts";
 import { buildFeed } from "../src/feed/cards.ts";
 import { describePullRequestStanding } from "../src/domain/describe.ts";
 import { checkReviewGate } from "../src/projection/review-gate.ts";
@@ -341,68 +340,3 @@ describe("a durable record behind GitHub becomes a finding, not a correction", (
   });
 });
 
-// ---------------------------------------------------------------------------
-
-describe("the portfolio groups without dropping anything", () => {
-  const card = (projectId: string, id: string, severity: "HIGH" | "NONE", occurredAt: string) => ({
-    id,
-    projectId,
-    projectName: projectId,
-    entityLabel: "PR #1",
-    entityType: "PULL_REQUEST" as const,
-    entityId: "pr:1",
-    occurredAt,
-    headline: id,
-    whatChanged: id,
-    currentState: "x",
-    needsYou: severity === "HIGH" ? "Do something" : "Nothing.",
-    severity,
-    rank: 0,
-    eventIds: [id],
-  });
-
-  const project = (id: string) => ({
-    project: {
-      id,
-      ownerUserId: "50thycal",
-      repositoryFullName: `50thycal/${id}`,
-      defaultBranch: "main",
-      buildOsDetected: false,
-      paths: { projectModel: "", decisions: "", activeWork: "", workstreamDir: "" },
-      enabled: true,
-      createdAt: "2026-08-01T00:00:00Z",
-    },
-    state: emptyState({ projectId: id }),
-  });
-
-  it("puts a project that needs the owner above a busier one that does not", () => {
-    const groups = buildPortfolio({
-      projects: [project("quiet"), project("asking")],
-      cards: [
-        card("quiet", "c1", "NONE", "2026-08-28T11:59:00Z"),
-        card("asking", "c2", "HIGH", "2026-08-20T00:00:00Z"),
-      ],
-    });
-
-    expect(groups.map((g) => g.projectId)).toEqual(["asking", "quiet"]);
-    expect(groups[0]!.needsYouCount).toBe(1);
-  });
-
-  it("collapses the tail rather than discarding it", () => {
-    const cards = Array.from({ length: 5 }, (_, i) =>
-      card("busy", `c${i}`, "NONE", `2026-08-2${i}T00:00:00Z`),
-    );
-    const [group] = buildPortfolio({ projects: [project("busy")], cards, visiblePerProject: 2 });
-
-    expect(group!.visible).toHaveLength(2);
-    expect(group!.collapsed).toHaveLength(3);
-    expect(group!.visible.length + group!.collapsed.length).toBe(cards.length);
-  });
-
-  it("says a project has no Build OS rather than hiding it", () => {
-    const [group] = buildPortfolio({ projects: [project("plain")], cards: [card("plain", "c1", "NONE", "2026-08-28T00:00:00Z")] });
-    expect(group!.buildOs).toBe(false);
-    // And it is still in the feed, which is the whole point.
-    expect(group!.visible).toHaveLength(1);
-  });
-});

@@ -254,3 +254,33 @@ export function normalizeSyncFailure(projectId: string, failure: GitHubSyncFailu
     },
   ];
 }
+
+/**
+ * A failure reading or parsing a project's *Build OS* artifacts, as distinct from a failure
+ * reaching GitHub's pull-request API.
+ *
+ * The two must never share a failure path. GitHub observation succeeding while Build OS reading
+ * fails is the ordinary case for a repository whose token can see pull requests but not one
+ * particular file, or whose workstream file briefly has a shape the parser cannot use — and it
+ * must not discard the pull-request data this cycle already fetched. Reusing `normalizeSyncFailure`
+ * for it would also set `syncFailed`, which suppresses `putProjectState` entirely and made a card
+ * whose event *did* arrive report `No current state recorded.` for a fact the sync actually knew.
+ */
+export function normalizeBuildOsSyncFailure(projectId: string, failure: GitHubSyncFailure): EventDraft[] {
+  return [
+    {
+      projectId,
+      eventType: "SYNC_FAILED",
+      source: {
+        sourceType: "GITHUB_STATE",
+        sourceId: `buildos-sync:${failure.repositoryFullName}`,
+        observedAt: failure.observedAt,
+      },
+      actor: { type: "SYSTEM", name: "companion" },
+      occurredAt: failure.observedAt,
+      summaryShort: `Could not read Build OS artifacts for ${failure.repositoryFullName}: ${failure.reason}`,
+      raw: { statusCode: failure.statusCode },
+      fingerprintParts: ["buildos", failure.reason, failure.observedAt.slice(0, 13)],
+    },
+  ];
+}
