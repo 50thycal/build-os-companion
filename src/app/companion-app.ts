@@ -24,6 +24,13 @@ import { syncAll, type DiscoveryOutcome, type SyncAllResult } from "../sync/dura
 import type { CompanionConfig } from "../config/followed.ts";
 import { buildFactPack, type FactPack } from "../briefing/fact-pack.ts";
 import { buildSinceLastChecked, type SinceLastChecked } from "../briefing/since.ts";
+import {
+  buildDeepDivePodcastScript,
+  buildDigestPodcastScript,
+  type DeepDiveBeat,
+  type DeepDiveTopic,
+  type PodcastScript,
+} from "../podcast/index.ts";
 
 /** How many events per project the feed considers. Ranking decides what surfaces. */
 const FEED_EVENT_WINDOW = 300;
@@ -253,6 +260,39 @@ export class CompanionApp {
       ownerUserId: this.#ownerLogin,
       now: this.now(),
       projectId,
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // Podcast scripts
+  // -------------------------------------------------------------------------
+
+  /** The digest script — "what changed" — over the same fact pack the briefing page renders. */
+  digestPodcastScript(projectId?: string): PodcastScript {
+    return buildDigestPodcastScript(this.briefing(projectId));
+  }
+
+  /**
+   * A deep-dive script for a topic the owner has already approved.
+   *
+   * `factIds` selects which facts from the current fact pack ground it; each section that has at
+   * least one selected fact becomes a beat named after that section, so a caller never has to
+   * hand-author beat structure — it only chooses which already-grounded facts belong in the
+   * episode.
+   */
+  deepDivePodcastScript(input: { topic: DeepDiveTopic; factIds: string[]; projectId?: string }): PodcastScript {
+    const pack = this.briefing(input.projectId);
+    const wanted = new Set(input.factIds);
+    const beats: DeepDiveBeat[] = pack.sections
+      .map((section) => ({ title: section.title, facts: section.facts.filter((f) => wanted.has(f.id)) }))
+      .filter((beat) => beat.facts.length > 0);
+
+    return buildDeepDivePodcastScript({
+      topic: input.topic,
+      beats,
+      generatedAt: pack.generatedAt,
+      ownerUserId: pack.ownerUserId,
+      projects: pack.projects,
     });
   }
 

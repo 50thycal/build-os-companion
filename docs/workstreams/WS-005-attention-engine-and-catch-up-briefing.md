@@ -96,5 +96,13 @@ DEC-009
 
 ## Next Step
 
-Owner uses Needs Me during real work and rules on D1: does it surface what genuinely needs them,
-and does it stay quiet otherwise?
+D1 is still open: nothing has calibrated the staleness thresholds against real use, and that is
+a distinct question from whether the fact pack and briefing are trustworthy at all.
+
+**2026-09-02 — relayed, per `CLAUDE.md`'s `solo`-mode rule on relaying an acceptance the owner
+actually gave, naming the channel.** In the conversation that unblocked WS-006, the owner
+confirmed directly that Needs Me and the fact pack/written briefing have held up in real use —
+enough to build on top of them (see WS-006's own *Unblocked* entry). That answers the "does it
+surface what genuinely needs them, and stay quiet otherwise" half of this next step. It does not
+answer D1 by itself: threshold calibration is its own question, still open, and this phase stays
+`REVIEW` rather than moving to `COMPLETE` on the strength of one relayed confirmation.

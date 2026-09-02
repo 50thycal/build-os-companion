@@ -29,6 +29,7 @@ import { feedView } from "./views/feed.ts";
 import { needsMeView, type NeedsMeItem } from "./views/needs-me.ts";
 import { projectListView, projectView } from "./views/project.ts";
 import { briefingView } from "./views/briefing.ts";
+import { podcastDeepDiveFormView, podcastScriptView } from "./views/podcast.ts";
 import { ago, esc, html } from "./html.ts";
 
 export interface ServerOptions {
@@ -253,6 +254,42 @@ async function handle(
       return;
     }
 
+    if (path === "/podcast/deep-dive") {
+      const body = new URLSearchParams(await readBody(req));
+      const title = (body.get("title") ?? "").trim();
+      const whyNow = (body.get("whyNow") ?? "").trim();
+      const factIds = body.getAll("factId");
+
+      if (!title || !whyNow || factIds.length === 0) {
+        send(
+          res,
+          400,
+          layout({
+            title: "Deep dive",
+            tab: "briefing",
+            body: html`<div class="empty">
+              <div class="big">Missing a title, a reason, or facts</div>
+              <p><a href="/podcast/deep-dive">Back</a></p>
+            </div>`,
+          }),
+        );
+        return;
+      }
+
+      const script = app.deepDivePodcastScript({ topic: { title, whyNow }, factIds });
+      send(
+        res,
+        200,
+        layout({
+          title: script.title,
+          subtitle: "deep-dive script",
+          tab: "briefing",
+          body: podcastScriptView(script),
+        }),
+      );
+      return;
+    }
+
     send(res, 405, layout({ title: "Not allowed", tab: "feed", body: "<div class='empty'>Method not allowed.</div>" }));
     return;
   }
@@ -380,6 +417,51 @@ async function handle(
   if (path === "/briefing.txt") {
     const { renderFactPack } = await import("../briefing/render.ts");
     send(res, 200, renderFactPack(app.briefing(), { includeRefs: url.searchParams.has("refs") }), "text/plain; charset=utf-8");
+    return;
+  }
+
+  if (path === "/podcast") {
+    const script = app.digestPodcastScript();
+    send(
+      res,
+      200,
+      layout({
+        title: "Podcast",
+        subtitle: script.title.toLowerCase(),
+        tab: "briefing",
+        needsCount,
+        signOut,
+        body: podcastScriptView(script, "/podcast.txt"),
+      }),
+    );
+    return;
+  }
+
+  // A plain-text digest script, for reading outside the app or piping somewhere.
+  if (path === "/podcast.txt") {
+    const { renderPodcastScript } = await import("../podcast/render.ts");
+    send(
+      res,
+      200,
+      renderPodcastScript(app.digestPodcastScript(), { includeRefs: url.searchParams.has("refs") }),
+      "text/plain; charset=utf-8",
+    );
+    return;
+  }
+
+  if (path === "/podcast/deep-dive") {
+    send(
+      res,
+      200,
+      layout({
+        title: "Deep dive",
+        subtitle: "pick a topic and the facts behind it",
+        tab: "briefing",
+        needsCount,
+        signOut,
+        body: podcastDeepDiveFormView(app.briefing()),
+      }),
+    );
     return;
   }
 

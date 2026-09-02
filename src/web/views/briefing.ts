@@ -129,7 +129,12 @@ export function briefingView(pack: FactPack, now: Date): string {
     </p>
     <form method="post" action="/sync" style="margin-top:12px">
       <button class="btn secondary" type="submit">Sync now</button>
-    </form>`,
+    </form>
+    <p class="muted" style="text-align:center;font-size:13px;margin-top:14px">
+      <a href="/podcast" style="display:inline-flex;align-items:center;min-height:44px;padding-block:12px;margin-block:-12px">
+        Hear it as a podcast script ↗
+      </a>
+    </p>`,
   );
 
   return parts.join("");
