@@ -7,6 +7,7 @@
 
 import type { AttentionItem, Severity } from "../domain/attention.ts";
 import { needsOwner, severityRank } from "../domain/attention.ts";
+import type { StoredSuggestionDecision, SuggestionDecision } from "../domain/podcast-suggestion.ts";
 import type {
   BuildOsPaths,
   DecisionRecord,
@@ -148,6 +149,28 @@ function toAttention(row: AttentionRow): TrackedAttentionItem {
     clearedAt: row.cleared_at ?? undefined,
     clearedSeq: row.cleared_seq ?? undefined,
     dismissedAt: row.dismissed_at ?? undefined,
+  };
+}
+
+interface SuggestionDecisionRow {
+  suggestion_id: string;
+  project_id: string;
+  decision: string;
+  title: string;
+  why_now: string;
+  refs_json: string;
+  decided_at: string;
+}
+
+function toSuggestionDecision(row: SuggestionDecisionRow): StoredSuggestionDecision {
+  return {
+    suggestionId: row.suggestion_id,
+    projectId: row.project_id,
+    decision: row.decision as SuggestionDecision,
+    title: row.title,
+    whyNow: row.why_now,
+    refs: JSON.parse(row.refs_json) as StoredSuggestionDecision["refs"],
+    decidedAt: row.decided_at,
   };
 }
 
@@ -530,6 +553,89 @@ export class CompanionStore {
    * nothing — a fresh install should not present its entire backfill as breaking news, and
    * callers decide what to do with `undefined` rather than being handed a silent zero.
    */
+  // -------------------------------------------------------------------------
+  // Podcast topic decisions
+  // -------------------------------------------------------------------------
+
+  /**
+   * Everything the owner has decided about a proposed episode, newest first.
+   *
+   * The suggestions themselves are never stored — they are recomputed from state, and their ids
+   * are content hashes of the situation they describe. Only the decision is durable, which is
+   * what makes "I already said no to this" survive a restart without a second copy of derived
+   * state going stale beside the first.
+   */
+  suggestionDecisions(projectId?: string): StoredSuggestionDecision[] {
+    const rows = projectId
+      ? this.#db
+          .prepare("SELECT * FROM podcast_topic_decisions WHERE project_id = ? ORDER BY decided_at DESC, suggestion_id ASC")
+          .all(projectId)
+      : this.#db
+          .prepare("SELECT * FROM podcast_topic_decisions ORDER BY decided_at DESC, suggestion_id ASC")
+          .all();
+    return (rows as unknown as SuggestionDecisionRow[]).map(toSuggestionDecision);
+  }
+
+  suggestionDecision(suggestionId: string): StoredSuggestionDecision | undefined {
+    const row = this.#db
+      .prepare("SELECT * FROM podcast_topic_decisions WHERE suggestion_id = ?")
+      .get(suggestionId) as SuggestionDecisionRow | undefined;
+    return row ? toSuggestionDecision(row) : undefined;
+  }
+
+  /**
+   * Record what the owner decided, keeping the proposal exactly as it stood when they decided it.
+   *
+   * The stored title, `whyNow` and refs are the approval itself. When an episode is generated
+   * later it is built from these and not from a fresh computation, so what gets made is what was
+   * said yes to — the guarantee the idea note asks for when it says approval must preserve the
+   * exact topic proposal and provenance.
+   *
+   * `EPISODE_CREATED` is terminal: a podcast that exists cannot be un-made, so a later decision
+   * never overwrites it.
+   */
+  decideSuggestion(input: StoredSuggestionDecision): StoredSuggestionDecision {
+    const existing = this.suggestionDecision(input.suggestionId);
+    if (existing?.decision === "EPISODE_CREATED") return existing;
+
+    this.#db
+      .prepare(
+        `INSERT INTO podcast_topic_decisions
+           (suggestion_id, project_id, decision, title, why_now, refs_json, decided_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(suggestion_id) DO UPDATE SET
+           decision = excluded.decision,
+           title = excluded.title,
+           why_now = excluded.why_now,
+           refs_json = excluded.refs_json,
+           decided_at = excluded.decided_at`,
+      )
+      .run(
+        input.suggestionId,
+        input.projectId,
+        input.decision,
+        input.title,
+        input.whyNow,
+        JSON.stringify(input.refs),
+        input.decidedAt,
+      );
+    return this.suggestionDecision(input.suggestionId)!;
+  }
+
+  /**
+   * Withdraw a save or a dismissal, putting the topic back in front of the owner.
+   *
+   * The row is deleted rather than marked, because it exists to record a *standing* decision and
+   * a withdrawn decision is not one. An episode that was actually generated is not withdrawable:
+   * returns `false` and changes nothing, so a caller can tell a refusal from a no-op.
+   */
+  undecideSuggestion(suggestionId: string): boolean {
+    const existing = this.suggestionDecision(suggestionId);
+    if (!existing || existing.decision === "EPISODE_CREATED") return false;
+    this.#db.prepare("DELETE FROM podcast_topic_decisions WHERE suggestion_id = ?").run(suggestionId);
+    return true;
+  }
+
   getReadCursor(ownerUserId: string): ReadCursor | undefined {
     const row = this.#db
       .prepare("SELECT * FROM read_cursor WHERE owner_user_id = ?")
