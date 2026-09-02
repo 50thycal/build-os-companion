@@ -37,6 +37,8 @@ const PAGES = [
   ["needs me", "/needs-me"],
   ["projects", "/projects"],
   ["briefing", "/briefing"],
+  ["podcast", "/podcast"],
+  ["podcast deep dive", "/podcast/deep-dive"],
 ];
 
 const browser = await chromium.launch({

@@ -28,6 +28,12 @@ Its one unfinished acceptance step — running discovery against live credential
 portfolio it finds — did not disappear with it. It sits on WS-002, which needed the same run to
 close anyway.
 
+WS-006 moved from `IDEA`/`Blocked` to `BUILDING`/`Active` on 2026-09-02: the owner confirmed
+directly, in the conversation that requested this build, that Needs Me and the fact pack/written
+briefing have held up in real use, which was what WS-006 was waiting on. WS-006's own file
+records that as a relayed confirmation, not a PR verdict — see its *Unblocked* entry and
+WS-005's *Next Step*, both dated the same day.
+
 This board moved here from `50thycal/build-os` when the application was extracted (`DEC-008`).
 Protocol contracts stay in build-os and are vendored under `contracts/`; see `contracts/README.md`.
 
@@ -38,7 +44,7 @@ Protocol contracts stay in build-os and are vendored under `contracts/`; see `co
 | [WS-003](WS-003-build-os-workstream-integration.md) | Build OS workstream integration | REVIEW | Active | Owner review of live artifact parsing; confirm both repository layouts stay detected | [#1](https://github.com/50thycal/build-os-companion/pull/1) |
 | [WS-004](WS-004-agent-session-checkpoint-protocol.md) | Agent session checkpoint protocol | READY_TO_BUILD | Paused | Paused deliberately: no agent posts checkpoints yet, so the intake API has no producer | — |
 | [WS-005](WS-005-attention-engine-and-catch-up-briefing.md) | Attention engine + catch-up briefing | REVIEW | Active | Owner review of Needs Me and the fact pack against real use before prose rendering | [#1](https://github.com/50thycal/build-os-companion/pull/1) |
-| [WS-006](WS-006-podcast-renderer.md) | Podcast renderer | IDEA | Blocked | Blocked until the written fact pack proves accurate in real use against Party Games | — |
+| [WS-006](WS-006-podcast-renderer.md) | Podcast renderer | BUILDING | Active | Owner review of the digest and deep-dive scripts against real use | — |
 | [WS-007](WS-007-owner-application.md) | Owner-facing application | REVIEW | Active | Owner uses the deployed app against Party Games during real Build OS work | [#1](https://github.com/50thycal/build-os-companion/pull/1) |
 
 <!-- Phase: IDEA · EXPLORE · MODEL · DECIDE · BUILD_CARD · READY_TO_BUILD · BUILDING · REVIEW
