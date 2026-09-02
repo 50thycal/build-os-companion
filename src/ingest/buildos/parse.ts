@@ -152,6 +152,8 @@ export interface ParsedReviewRecord {
   prNumber?: number;
   verdict?: ReviewVerdict;
   reviewedHead?: string;
+  /** The head an `Owner-accepted` verdict names. Never merged into `reviewedHead` — see below. */
+  acceptedHead?: string;
   finalized: boolean;
 }
 
@@ -164,6 +166,7 @@ export interface ParsedReviewState {
   /** Set when a field was present but unreadable. The field itself stays absent. */
   verdictMalformed: boolean;
   reviewedHeadMalformed: boolean;
+  acceptedHeadMalformed: boolean;
 }
 
 export function normalizeVerdict(text: string): ReviewVerdict | undefined {
@@ -220,13 +223,25 @@ function parseReviewTable(stripped: string): ParsedReviewState | undefined {
 
   const prIdx = columnIndex(table.headers, "pr");
   const verdictIdx = columnIndex(table.headers, "verdict");
-  const headIdx = columnIndex(table.headers, "reviewed head", "head");
+  const acceptedIdx = columnIndex(table.headers, "accepted head");
+  /**
+   * `columnIndex` matches on substring, so a bare `head` needle finds an **`Accepted head`**
+   * column too. Left alone, a solo project's acceptance would be read as a reviewed head and
+   * every downstream check — the merge gate included — would treat it as an approval, which is
+   * the one conflation v0.8 exists to prevent. So the exact name wins, and the loose fallback
+   * that keeps pre-v0.8 tables working is refused when it lands on the accepted column.
+   */
+  const reviewedIdx = columnIndex(table.headers, "reviewed head");
+  const looseIdx = columnIndex(table.headers, "head");
+  const headIdx =
+    reviewedIdx !== -1 ? reviewedIdx : looseIdx !== acceptedIdx ? looseIdx : -1;
   const finalIdx = columnIndex(table.headers, "finalization", "finalized");
 
   const result: ParsedReviewState = {
     records: [],
     verdictMalformed: false,
     reviewedHeadMalformed: false,
+    acceptedHeadMalformed: false,
   };
 
   for (const row of table.rows) {
@@ -247,8 +262,19 @@ function parseReviewTable(stripped: string): ParsedReviewState | undefined {
     if (head.head) record.reviewedHead = head.head;
     if (head.malformed) result.reviewedHeadMalformed = true;
 
+    const accepted = parseHead(cell(row, acceptedIdx));
+    if (accepted.head) record.acceptedHead = accepted.head;
+    if (accepted.malformed) result.acceptedHeadMalformed = true;
+
     // A row claiming nothing about nothing is table padding, not a review record.
-    if (record.prNumber === undefined && !record.verdict && !record.reviewedHead) continue;
+    if (
+      record.prNumber === undefined &&
+      !record.verdict &&
+      !record.reviewedHead &&
+      !record.acceptedHead
+    ) {
+      continue;
+    }
     result.records.push(record);
   }
 
@@ -263,7 +289,12 @@ function parseReviewTable(stripped: string): ParsedReviewState | undefined {
  * v0.5 — absent metadata, not an error.
  */
 export function parseReviewState(body: string | undefined): ParsedReviewState {
-  const empty: ParsedReviewState = { records: [], verdictMalformed: false, reviewedHeadMalformed: false };
+  const empty: ParsedReviewState = {
+    records: [],
+    verdictMalformed: false,
+    reviewedHeadMalformed: false,
+    acceptedHeadMalformed: false,
+  };
   if (body === undefined) return empty;
 
   const stripped = stripHtmlComments(stripCodeFences(body));
@@ -271,7 +302,12 @@ export function parseReviewState(body: string | undefined): ParsedReviewState {
   const table = parseReviewTable(stripped);
   if (table) return table;
 
-  const result: ParsedReviewState = { records: [], verdictMalformed: false, reviewedHeadMalformed: false };
+  const result: ParsedReviewState = {
+    records: [],
+    verdictMalformed: false,
+    reviewedHeadMalformed: false,
+    acceptedHeadMalformed: false,
+  };
   const record: ParsedReviewRecord = { finalized: false };
   let present = false;
 
@@ -289,6 +325,19 @@ export function parseReviewState(body: string | undefined): ParsedReviewState {
     const head = parseHead(headRaw);
     if (head.head) record.reviewedHead = head.head;
     if (head.malformed) result.reviewedHeadMalformed = true;
+  }
+
+  /**
+   * Its own field, never folded into `Reviewed head`. The substitution *is* the signal: a verdict
+   * naming an accepted head is stating that nothing was reviewed, and a consumer that stores the
+   * two in one place has thrown that away before any check can see it.
+   */
+  const acceptedRaw = /\*{0,2}Accepted\s+head\*{0,2}\s*:\s*\*{0,2}\s*([^\n|]+)/i.exec(stripped)?.[1];
+  if (acceptedRaw !== undefined) {
+    present = true;
+    const accepted = parseHead(acceptedRaw);
+    if (accepted.head) record.acceptedHead = accepted.head;
+    if (accepted.malformed) result.acceptedHeadMalformed = true;
   }
 
   const prRaw = /\*{0,2}Reviewed\s+PR\*{0,2}\s*:\s*\*{0,2}\s*([^\n|]+)/i.exec(stripped)?.[1];

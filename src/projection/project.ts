@@ -10,6 +10,7 @@ import type { CompanionEvent } from "../domain/events.ts";
 import type {
   DecisionRecord,
   IntegrityWarning,
+  OperatingMode,
   ProjectState,
   PullRequestState,
   SessionState,
@@ -99,6 +100,8 @@ export interface ProjectStateInput {
   conflicts?: SourceConflict[];
   /** When the project adopted its current Build OS version, if recorded. */
   buildOsAdoptedAt?: string;
+  /** The project's declared operating mode (v0.8). Absent means undeclared, which reads as `reviewed`. */
+  operatingMode?: OperatingMode;
 }
 
 export function buildProjectState(input: ProjectStateInput): ProjectState {
@@ -111,7 +114,10 @@ export function buildProjectState(input: ProjectStateInput): ProjectState {
   // layer noticed.
   const integrityWarnings = [
     ...(input.integrityWarnings ?? []),
-    ...checkReviewGate(workstreams, pullRequests, { adoptedAt: input.buildOsAdoptedAt }),
+    ...checkReviewGate(workstreams, pullRequests, {
+      adoptedAt: input.buildOsAdoptedAt,
+      operatingMode: input.operatingMode,
+    }),
   ];
 
   return {

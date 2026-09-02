@@ -64,6 +64,7 @@ describe("Review State parser (v0.5)", () => {
       records: [],
       verdictMalformed: false,
       reviewedHeadMalformed: false,
+      acceptedHeadMalformed: false,
     });
   });
 

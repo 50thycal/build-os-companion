@@ -109,6 +109,11 @@
       "maxLength": 500,
       "description": "The single most useful next action, matching the workstream file's Next Step where one exists."
     },
+    "owner_result": {
+      "type": ["string", "null"],
+      "enum": ["SHIP", "DECISION", "BLOCKED", null],
+      "description": "The terminal owner-facing state this session has reached, when it has reached one. Null or absent while work is still in flight: an in-progress session has no owner result, and 'no result yet' is never SHIP. Derived from durable state — where a durable Build OS artifact disagrees, the artifact wins and the disagreement is surfaced. See framework/OWNER_INTERFACE.md."
+    },
     "related_pr": {
       "type": ["integer", "null"],
       "minimum": 1,

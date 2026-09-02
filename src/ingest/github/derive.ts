@@ -17,7 +17,7 @@ import type { SourceRef } from "../../domain/provenance.ts";
 import type { GitHubPullRequestObservation } from "./types.ts";
 import { commentVerdicts, implementationActor } from "./comment-verdict.ts";
 import { isApprovingVerdict, objectionLabel } from "../../domain/state.ts";
-import type { Objection } from "../../domain/state.ts";
+import type { Objection, OwnerAcceptance } from "../../domain/state.ts";
 
 export function deriveLifecycle(pr: GitHubPullRequestObservation): PullRequestLifecycle {
   if (pr.merged) return "MERGED";
@@ -52,9 +52,19 @@ interface Position {
   actor?: string;
   at: string;
   approving: boolean;
+  /**
+   * The owner accepting work nobody reviewed (v0.8), which is never an approval.
+   *
+   * Separate from `approving` on purpose: every check written for an approval must keep failing
+   * on an acceptance unless it has explicitly asked for one, in a project that has declared it
+   * has no reviewer.
+   */
+  ownerAccepted: boolean;
   changesRequested: boolean;
   /** The commit the position was taken against, when one is recorded. */
   head?: string;
+  /** Prose the comment carried — a relayed acceptance says so only here. */
+  note?: string;
   /**
    * Whether this position may open the merge gate.
    *
@@ -98,6 +108,8 @@ function activePositions(pr: GitHubPullRequestObservation): { positions: Positio
       author: review.author,
       at: review.submittedAt,
       approving: review.state === "APPROVED",
+      // GitHub has no acceptance artifact; an acceptance only ever arrives as a comment verdict.
+      ownerAccepted: false,
       changesRequested: review.state === "CHANGES_REQUESTED",
       head: review.commitId,
       // GitHub authenticated this one, and refuses it on a PR the account authored — so a review
@@ -160,13 +172,19 @@ function activePositions(pr: GitHubPullRequestObservation): { positions: Positio
       );
     }
 
+    const ownerAccepted = position.verdict === "OWNER_ACCEPTED";
+
     consider({
       author: position.author,
       actor: position.actor,
       at: position.at,
       approving: isApprovingVerdict(position.verdict),
+      ownerAccepted,
       changesRequested: position.verdict === "CHANGES_REQUIRED",
-      head: position.reviewedHead,
+      // An acceptance names its commit in its own field, and reading the reviewed one for it
+      // would both lose the distinction and silently pass an acceptance that named nothing.
+      head: ownerAccepted ? position.acceptedHead : position.reviewedHead,
+      note: position.note,
       // An edited comment never opens the gate: the verdict can be rewritten while the commit it
       // names stays fixed. It still closes one, below — refusing to open on doubtful evidence and
       // refusing to close on it are not symmetric, and only one of them is safe.
@@ -201,6 +219,36 @@ export function deriveApprovedHeadShas(pr: GitHubPullRequestObservation): string
     if (position.head) shas.add(position.head.toLowerCase());
   }
   return [...shas].sort();
+}
+
+/**
+ * Owner acceptances that are current positions on this pull request (v0.8).
+ *
+ * Kept apart from `deriveApprovedHeadShas` at every level, so that no check written for an
+ * approval can pick one up by accident. Whether an acceptance clears anything depends on the
+ * project's operating mode, which is not known here — this reports what the PR carries.
+ */
+export function deriveOwnerAcceptances(pr: GitHubPullRequestObservation): OwnerAcceptance[] {
+  return activePositions(pr)
+    .positions.filter((position) => position.ownerAccepted && position.gateClearing)
+    .map((position) => ({
+      author: position.author,
+      actor: position.actor,
+      head: position.head?.toLowerCase(),
+      note: position.note,
+      at: position.at,
+    }))
+    .sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+}
+
+/**
+ * How many current review positions this pull request carries, of any kind.
+ *
+ * Zero is the interesting value: it means nothing outside the workstream file records a verdict
+ * on this PR, so a file claiming one has nothing behind it.
+ */
+export function deriveRecordedPositionCount(pr: GitHubPullRequestObservation): number {
+  return activePositions(pr).positions.length;
 }
 
 /**
@@ -306,6 +354,8 @@ export function derivePullRequestState(
     ciState: deriveCiState(pr),
     requestedReviewers: [...pr.requestedReviewers],
     approvedHeadShas: deriveApprovedHeadShas(pr),
+    ownerAcceptances: deriveOwnerAcceptances(pr),
+    recordedPositions: deriveRecordedPositionCount(pr),
     changesRequestedBy: deriveChangesRequestedBy(pr),
     mutatedEvidence: deriveVerdictIntegrityWarnings(pr),
     // Populated by the Build OS layer, which is the only thing that knows about workstreams.

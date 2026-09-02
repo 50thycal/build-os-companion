@@ -443,6 +443,12 @@ function integrityAction(code: IntegrityCode): string {
       return "Record a verdict for the linked pull request before it merges.";
     case "APPROVED_WITHOUT_REVIEWED_HEAD":
       return "Name the reviewed commit. An approval that names no commit proves nothing about the code.";
+    case "ACCEPTED_HEAD_MALFORMED":
+      return "Name the accepted commit in full. An abbreviation cannot prove which commit was accepted.";
+    case "OWNER_ACCEPTED_IN_REVIEWED_MODE":
+      return "Get the review the project says is available, or declare the project solo if it genuinely is not.";
+    case "VERDICT_UNSUPPORTED":
+      return "Post the verdict on the pull request, or correct the record. Nothing outside the file records this one.";
     default:
       return "Reconcile the board and the workstream files.";
   }

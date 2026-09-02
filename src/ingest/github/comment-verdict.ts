@@ -40,6 +40,12 @@ const FULL_SHA = /^[0-9a-f]{40}$/i;
 
 const MARKER = /^\s*build os review verdict\s*:\s*(.+?)\s*$/i;
 const HEAD = /^\s*reviewed head\s*:\s*(.+?)\s*$/i;
+/**
+ * `Owner-accepted` names its commit here instead (v0.8), and a consumer keys on the field name
+ * to tell an acceptance from an approval. The substitution *is* the signal — nothing was
+ * reviewed — so the two are read into separate fields and never merged.
+ */
+const ACCEPTED_HEAD = /^\s*accepted head\s*:\s*(.+?)\s*$/i;
 const ACTOR = /^\s*review actor\s*:\s*(.+?)\s*$/i;
 /** The implementation actor as the reviewer saw it, captured inside the verdict itself. */
 const REVIEWED_IMPLEMENTATION_ACTOR = /^\s*implementation actor reviewed\s*:\s*(.+?)\s*$/i;
@@ -57,8 +63,25 @@ function deemphasize(line: string): string {
 
 export interface CommentVerdict {
   verdict: ReviewVerdict;
-  /** Lowercased full SHA the verdict was given against. */
-  reviewedHead: string;
+  /**
+   * Lowercased full SHA the verdict was given against.
+   *
+   * For an `Owner-accepted` verdict this is absent and `acceptedHead` carries the commit: the
+   * field the verdict used is itself part of what the verdict says.
+   */
+  reviewedHead?: string;
+  /** Lowercased full SHA an `Owner-accepted` verdict named. Never folded into `reviewedHead`. */
+  acceptedHead?: string;
+  /**
+   * Prose the comment carried beneath the fields.
+   *
+   * Kept because of what it carries in practice: a **relayed** acceptance — one an agent
+   * transcribed from a decision the owner gave elsewhere — is parsed identically to one the
+   * owner posted, and says so only here. The parse contract is explicit that a consumer must not
+   * normalise this away when showing the verdict to a person, because the difference between an
+   * owner-posted acceptance and an agent's report of one is exactly what this prose carries.
+   */
+  note?: string;
   /**
    * Who issued the verdict, as distinct from the GitHub account that carried it.
    *
@@ -112,8 +135,10 @@ export function parseCommentVerdict(body: string): CommentVerdict | undefined {
 
   // Fields belong to their own marker, so two verdict blocks in one comment cannot cross-wire.
   let head: string | undefined;
+  let acceptedHead: string | undefined;
   let actor: string | undefined;
   let reviewedImplementationActor: string | undefined;
+  const prose: string[] = [];
 
   for (const raw of lines.slice(markerIndex + 1)) {
     const line = deemphasize(raw);
@@ -126,6 +151,14 @@ export function parseCommentVerdict(body: string): CommentVerdict | undefined {
       // prove which one, which is worse than claiming none.
       if (!FULL_SHA.test(candidate)) return undefined;
       head = candidate.toLowerCase();
+      continue;
+    }
+
+    const acceptedMatch = ACCEPTED_HEAD.exec(line);
+    if (acceptedMatch && acceptedHead === undefined) {
+      const candidate = acceptedMatch[1]!.trim();
+      if (!FULL_SHA.test(candidate)) return undefined;
+      acceptedHead = candidate.toLowerCase();
       continue;
     }
 
@@ -142,12 +175,30 @@ export function parseCommentVerdict(body: string): CommentVerdict | undefined {
     if (actorMatch && actor === undefined) {
       const candidate = actorMatch[1]!.trim();
       if (candidate !== "") actor = candidate;
+      continue;
     }
+
+    // Anything that is not one of the fields is the comment's own words. A relayed acceptance
+    // lives here and nowhere else, so it is kept rather than discarded with the rest.
+    if (raw.trim() !== "") prose.push(raw.trim());
   }
 
-  return head === undefined
-    ? undefined
-    : { verdict, reviewedHead: head, actor, reviewedImplementationActor };
+  /**
+   * A verdict names a commit, in whichever field belongs to it. An `Owner-accepted` that names
+   * a `Reviewed head` has said something the protocol does not allow it to say — nothing was
+   * reviewed — so the mismatched pairing is refused rather than quietly re-filed.
+   */
+  const namedHead = verdict === "OWNER_ACCEPTED" ? acceptedHead : head;
+  if (namedHead === undefined) return undefined;
+
+  return {
+    verdict,
+    reviewedHead: head,
+    acceptedHead,
+    actor,
+    reviewedImplementationActor,
+    note: prose.length > 0 ? prose.join(" ") : undefined,
+  };
 }
 
 /**

@@ -94,9 +94,12 @@ async function main(): Promise<void> {
 
   const workstreamPaths = await github.listPaths(repo, DEFAULT_BUILD_OS_PATHS.workstreamDir);
   const claudeMd = await github.readFile(repo, "CLAUDE.md");
+  // Only for a repository with no instructions file — see `DetectionInput.versionFile`.
+  const versionMd = claudeMd ? undefined : await github.readFile(repo, "VERSION.md");
   const detection = detectBuildOs({
     paths: [...workstreamPaths, DEFAULT_BUILD_OS_PATHS.activeWork],
     agentInstructions: claudeMd?.content,
+    versionFile: versionMd?.content,
   });
 
   const project: FollowedProject = {

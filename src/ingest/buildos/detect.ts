@@ -6,13 +6,34 @@
  * "check the overrides", not "this project does not use Build OS".
  */
 
-import { DEFAULT_BUILD_OS_PATHS, type BuildOsPaths } from "../../domain/state.ts";
+import {
+  DEFAULT_BUILD_OS_PATHS,
+  normalizeOperatingMode,
+  type BuildOsPaths,
+  type OperatingMode,
+} from "../../domain/state.ts";
+import { stripCodeFences, stripHtmlComments } from "./markdown.ts";
 
 export interface DetectionInput {
   /** Every path in the repository, or at least every markdown path. */
   paths: string[];
   /** Contents of `CLAUDE.md` or the project's agent-instructions file, when present. */
   agentInstructions?: string;
+  /**
+   * Contents of `VERSION.md`, read only for a repository that has no agent-instructions file.
+   *
+   * The framework block normally lives in `CLAUDE.md`. Canonical Build OS has no such file — it
+   * is a protocol repository, not a codebase an agent works in — and says so where it keeps the
+   * block instead: *"recorded here because Build OS has no separate agent-instructions file to
+   * carry a framework block."* Reading it there is reading the framework block where it is, not
+   * guessing. `detect` already probes for the artifacts a repository actually has, for the same
+   * reason and with the same precedent.
+   *
+   * `README.md` is deliberately **not** a fallback. It carries a worked example framework block
+   * declaring `reviewed`, so a repository that is genuinely `solo` would be read as the opposite
+   * — the one wrong answer worse than no answer.
+   */
+  versionFile?: string;
   /** Owner-configured overrides. Always win. */
   overrides?: Partial<BuildOsPaths>;
 }
@@ -22,6 +43,13 @@ export interface DetectionResult {
   version?: string;
   /** When the project adopted `version`, if its instructions record the date. */
   adoptedAt?: string;
+  /**
+   * The project's declared operating mode (Build OS v0.8), when it declares one.
+   *
+   * Absent means the project has not said, which the parse contract reads as `reviewed`. Kept
+   * distinct from an explicit `reviewed` here so a caller can tell a declaration from a default.
+   */
+  operatingMode?: OperatingMode;
   paths: BuildOsPaths;
   /** How detection concluded, so a repository that "should" be detected can be debugged. */
   evidence: string[];
@@ -38,6 +66,29 @@ const ADOPTED_VERSION_PATTERN = /Adopted version\s*:\s*v?(\d+\.\d+(?:\.\d+)?)/i;
 const ADOPTED_AT_PATTERN =
   /Last compatibility check\s*:\s*v?(\d+\.\d+(?:\.\d+)?)\s+on\s+(\d{4}-\d{2}-\d{2})/i;
 
+/**
+ * `- Operating mode: solo` — the framework-block line shape the parse contract specifies.
+ *
+ * The table form `| Operating mode | solo |` is accepted too, because that is how the canonical
+ * repository actually records its own mode. Both are the same declaration written into the two
+ * shapes a framework block takes; refusing the second would mean reading canonical Build OS as
+ * `reviewed` when it has declared `solo` in the file it points at.
+ */
+const OPERATING_MODE_PATTERN = /Operating mode\s*[:|]\s*\*{0,2}`?([A-Za-z]+)`?/i;
+
+/**
+ * The declared operating mode, or undefined when the text declares none.
+ *
+ * Fenced and commented text is stripped first, for the reason every other reader here does it:
+ * a document *explaining* the modes — and both canonical and this repository's own instructions
+ * do — must never be read as *declaring* one.
+ */
+function declaredOperatingMode(text: string | undefined): OperatingMode | undefined {
+  if (!text) return undefined;
+  const match = OPERATING_MODE_PATTERN.exec(stripHtmlComments(stripCodeFences(text)));
+  return normalizeOperatingMode(match?.[1]);
+}
+
 export function detectBuildOs(input: DetectionInput): DetectionResult {
   const evidence: string[] = [];
   const pathSet = new Set(input.paths);
@@ -51,7 +102,19 @@ export function detectBuildOs(input: DetectionInput): DetectionResult {
   // describing an older version says nothing about when the current one arrived.
   const adoptedAt = checked && version && checked[1] === version ? checked[2] : undefined;
 
+  /**
+   * The instructions file first, then `VERSION.md` only when there is no instructions file at
+   * all. A project that has a framework block and does not declare a mode has said `reviewed` by
+   * omission, and must not have a different answer read out from somewhere else.
+   */
+  const operatingMode =
+    declaredOperatingMode(input.agentInstructions) ??
+    (input.agentInstructions === undefined
+      ? declaredOperatingMode(input.versionFile)
+      : undefined);
+
   if (version) evidence.push(`agent instructions declare Build OS v${version}`);
+  if (operatingMode) evidence.push(`declares operating mode ${operatingMode}`);
   if (adoptedAt) evidence.push(`adopted v${version} on ${adoptedAt}`);
   else if (/build\s*os/i.test(instructions)) evidence.push("agent instructions mention Build OS");
 
@@ -114,7 +177,7 @@ export function detectBuildOs(input: DetectionInput): DetectionResult {
   const detected = Boolean(version) || hasConventional || hasWorkstreamFiles || hasOverrides;
   if (!detected) evidence.push("no Build OS artifacts or overrides found");
 
-  return { detected, version, adoptedAt, paths, evidence };
+  return { detected, version, adoptedAt, operatingMode, paths, evidence };
 }
 
 /** Files under the workstream directory that the parse contract recognises. */
