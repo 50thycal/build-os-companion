@@ -128,7 +128,7 @@ None yet. D1's answer will deserve one.
 
 ## Related PRs
 
-Opened from this build; filled in once the PR number is known.
+- [#19](https://github.com/50thycal/build-os-companion/pull/19) — the rules, the decision lifecycle, and the approval path
 
 ## Next Step
 

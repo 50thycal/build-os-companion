@@ -46,7 +46,7 @@ Protocol contracts stay in build-os and are vendored under `contracts/`; see `co
 | [WS-005](WS-005-attention-engine-and-catch-up-briefing.md) | Attention engine + catch-up briefing | REVIEW | Active | Owner review of Needs Me and the fact pack against real use before prose rendering | [#1](https://github.com/50thycal/build-os-companion/pull/1) |
 | [WS-006](WS-006-podcast-renderer.md) | Podcast renderer | BUILDING | Active | Owner review of the digest and deep-dive scripts against real use | — |
 | [WS-007](WS-007-owner-application.md) | Owner-facing application | REVIEW | Active | Owner uses the deployed app against Party Games during real Build OS work | [#1](https://github.com/50thycal/build-os-companion/pull/1) |
-| [WS-009](WS-009-podcast-topic-suggestions.md) | Podcast topic suggestions | BUILDING | Active | Owner rules on D1: does the page propose things worth understanding, and stay quiet otherwise? | — |
+| [WS-009](WS-009-podcast-topic-suggestions.md) | Podcast topic suggestions | BUILDING | Active | Owner rules on D1: does the page propose things worth understanding, and stay quiet otherwise? | [#19](https://github.com/50thycal/build-os-companion/pull/19) |
 
 <!-- Phase: IDEA · EXPLORE · MODEL · DECIDE · BUILD_CARD · READY_TO_BUILD · BUILDING · REVIEW
      Status: Active · Paused · Blocked · Abandoned
