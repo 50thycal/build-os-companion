@@ -16,7 +16,7 @@
  * choice stays reversible.
  */
 
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 /**
  * `seq` is the spine of the whole design.
@@ -119,4 +119,29 @@ export const MIGRATIONS: string[][] = [
   // masquerade as resolution: a badge count and a briefing that both read `cleared_at` would
   // report an item as fixed when the owner had only agreed to stop being reminded of it.
   [`ALTER TABLE attention_items ADD COLUMN dismissed_at TEXT`],
+
+  // ---- v5 -----------------------------------------------------------------
+  // What the owner decided about a proposed podcast topic — and only that.
+  //
+  // Suggestions themselves are not stored. They are recomputed from state on every read, and
+  // their ids are content hashes, so the same situation always proposes the same topic. Storing
+  // the proposals too would mean a second copy of derived state to keep in step with the first,
+  // for no gain: the only thing that cannot be recomputed is what the owner said about one.
+  //
+  // The proposal *is* copied onto the decision row, though, and that is deliberate. Approval has
+  // to preserve what was approved: when an episode is eventually generated it must be built from
+  // the topic and provenance the owner accepted, not from a recomputed topic that has drifted
+  // since while keeping the same id.
+  [
+    `CREATE TABLE IF NOT EXISTS podcast_topic_decisions (
+       suggestion_id TEXT PRIMARY KEY,
+       project_id    TEXT NOT NULL,
+       decision      TEXT NOT NULL,
+       title         TEXT NOT NULL,
+       why_now       TEXT NOT NULL,
+       refs_json     TEXT NOT NULL,
+       decided_at    TEXT NOT NULL
+     )`,
+    `CREATE INDEX IF NOT EXISTS podcast_topic_decisions_project ON podcast_topic_decisions (project_id, decision)`,
+  ],
 ];

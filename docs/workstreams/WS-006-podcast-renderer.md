@@ -54,8 +54,9 @@ The final segment of every briefing answers one question: what needs me next?
   because settling them well needs scripts to react to, not the reverse.
 - **Deep-dive topic *selection* stays out of this workstream.** A deep dive here is only ever
   built from a topic and a set of facts the owner has already chosen (currently: ticking facts
-  on a form). Deciding what deserves a deep dive automatically is
-  `docs/ideas/topic-podcast-suggestions.md`'s Suggest/Save/Dismiss idea, not yet built.
+  on a form). Deciding what deserves a deep dive is `docs/ideas/topic-podcast-suggestions.md`'s
+  Suggest/Save/Dismiss idea, and it is now **WS-009** — which feeds this renderer rather than
+  replacing any of it.
 
 ## Open Decisions
 
@@ -73,8 +74,8 @@ The final segment of every briefing answers one question: what needs me next?
 ## Non-Goals
 
 - No TTS work, no audio pipeline, no provider selection in this pass.
-- No automatic deep-dive topic detection/suggestion — that is idea-only
-  (`docs/ideas/topic-podcast-suggestions.md`) and a separate build.
+- No automatic deep-dive topic detection/suggestion — that is WS-009's, and it proposes rather
+  than generates: nothing it produces reaches this renderer without the owner approving it.
 - No persistence of generated scripts. A deep-dive script exists for the response that generated
   it; nothing is saved, scheduled, or fed back into the feed yet.
 
@@ -104,8 +105,20 @@ a deep dive with unknown fact ids produces an honest empty script rather than in
 
 ## Review State
 
-Not yet reviewed under `solo` mode — see `CLAUDE.md`. This will be an `Owner-accepted` record at
-merge, not a self-written one.
+**Owner-accepted**, not reviewed — the distinction `CLAUDE.md` insists on, and it holds here:
+nothing about this change was independently reviewed, and it must not be described or ranked as
+though it was.
+
+The acceptance covers head `ede8885715442a80eba7ec75b34baec2f2d91b57` and is recorded on
+[#18](https://github.com/50thycal/build-os-companion/pull/18#issuecomment-5512723624). It is a
+**relayed** acceptance: the owner gave it in the session that implemented the work, in reply to a
+message reporting that the merge had recorded no verdict, and an agent transcribed it. The channel
+is named in the comment itself.
+
+Worth keeping visible: the merge happened *before* the verdict, and for a window this PR was
+exactly the `MERGED_WITHOUT_APPROVAL` case `solo` mode says it will still report. That ordering is
+legitimate in `solo` mode — acceptance happens at merge — but the gap between the two was real and
+is not tidied away here.
 
 ## Related Decisions
 

@@ -41,7 +41,8 @@ export function podcastScriptView(script: PodcastScript, txtHref?: string): stri
     <p class="muted" style="text-align:center;font-size:13px;margin-top:8px">
       ${raw(txtHref ? html`<a href="${txtHref}" style="${LINK_STYLE}">plain text</a> · ` : "")}${raw(
         script.kind === "DIGEST"
-          ? html`<a href="/podcast/deep-dive" style="${LINK_STYLE}">start a deep dive</a>`
+          ? html`<a href="/podcast/suggestions" style="${LINK_STYLE}">suggested episodes</a> ·
+              <a href="/podcast/deep-dive" style="${LINK_STYLE}">start a deep dive</a>`
           : "",
       )}
     </p>`;

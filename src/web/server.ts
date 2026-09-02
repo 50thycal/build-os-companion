@@ -30,6 +30,7 @@ import { needsMeView, type NeedsMeItem } from "./views/needs-me.ts";
 import { projectListView, projectView } from "./views/project.ts";
 import { briefingView } from "./views/briefing.ts";
 import { podcastDeepDiveFormView, podcastScriptView } from "./views/podcast.ts";
+import { podcastSuggestionsView } from "./views/podcast-suggestions.ts";
 import { ago, esc, html } from "./html.ts";
 
 export interface ServerOptions {
@@ -254,6 +255,55 @@ async function handle(
       return;
     }
 
+    // Save and dismiss are bookkeeping; create is the approval, and it is the only one of the
+    // three that generates anything. Nothing here is reachable from a GET, so no amount of
+    // rendering or prefetching can approve a topic on the owner's behalf.
+    const suggestionMatch = /^\/podcast\/suggestions\/([A-Za-z0-9_]+)\/(create|save|dismiss|restore)$/.exec(path);
+    if (suggestionMatch) {
+      const [, id, action] = suggestionMatch as unknown as [string, string, string];
+
+      if (action === "restore") {
+        app.undecideSuggestion(id);
+        redirect(res, "/podcast/suggestions");
+        return;
+      }
+
+      if (action !== "create") {
+        app.decideSuggestion(id, action === "save" ? "SAVED" : "DISMISSED");
+        redirect(res, "/podcast/suggestions");
+        return;
+      }
+
+      const script = app.createPodcastFromSuggestion(id);
+      if (!script) {
+        send(
+          res,
+          404,
+          layout({
+            title: "Not found",
+            tab: "briefing",
+            body: html`<div class="empty">
+              <div class="big">That topic is no longer being suggested</div>
+              <p><a href="/podcast/suggestions">Back to suggestions</a></p>
+            </div>`,
+          }),
+        );
+        return;
+      }
+
+      send(
+        res,
+        200,
+        layout({
+          title: script.title,
+          subtitle: "deep-dive script",
+          tab: "briefing",
+          body: podcastScriptView(script),
+        }),
+      );
+      return;
+    }
+
     if (path === "/podcast/deep-dive") {
       const body = new URLSearchParams(await readBody(req));
       const title = (body.get("title") ?? "").trim();
@@ -445,6 +495,26 @@ async function handle(
       200,
       renderPodcastScript(app.digestPodcastScript(), { includeRefs: url.searchParams.has("refs") }),
       "text/plain; charset=utf-8",
+    );
+    return;
+  }
+
+  if (path === "/podcast/suggestions") {
+    const suggestions = app.podcastSuggestions();
+    send(
+      res,
+      200,
+      layout({
+        title: "Suggested episodes",
+        subtitle:
+          suggestions.length === 0
+            ? "nothing has earned one yet"
+            : `${suggestions.length} worth considering`,
+        tab: "briefing",
+        needsCount,
+        signOut,
+        body: podcastSuggestionsView(suggestions, app.suggestionDecisions(), now),
+      }),
     );
     return;
   }

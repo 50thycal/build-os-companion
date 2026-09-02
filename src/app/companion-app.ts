@@ -20,6 +20,12 @@ import { buildFeed, rankFeed, type FeedCard } from "../feed/cards.ts";
 import type { GitHubPort } from "../ingest/github/client.ts";
 import { SqliteEventLedger } from "../ledger/sqlite-ledger.ts";
 import type { CompanionStore, ReadCursor, StoredProject, TrackedAttentionItem } from "../store/store.ts";
+import type {
+  StoredSuggestionDecision,
+  SuggestionDecision,
+  TopicSuggestion,
+} from "../domain/podcast-suggestion.ts";
+import { openSuggestions, suggestTopics } from "../podcast/suggest.ts";
 import { syncAll, type DiscoveryOutcome, type SyncAllResult } from "../sync/durable-sync.ts";
 import type { CompanionConfig } from "../config/followed.ts";
 import { buildFactPack, type FactPack } from "../briefing/fact-pack.ts";
@@ -289,6 +295,107 @@ export class CompanionApp {
 
     return buildDeepDivePodcastScript({
       topic: input.topic,
+      beats,
+      generatedAt: pack.generatedAt,
+      ownerUserId: pack.ownerUserId,
+      projects: pack.projects,
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // Podcast topic suggestions
+  // -------------------------------------------------------------------------
+
+  /**
+   * Every candidate across the followed projects, including the ones the rules rejected.
+   *
+   * Rejected candidates are carried rather than dropped so the editorial judgment stays
+   * inspectable — the same reason the attention engine emits its suppression items.
+   */
+  topicCandidates(projectId?: string): TopicSuggestion[] {
+    const now = this.now();
+    const candidates: TopicSuggestion[] = [];
+
+    for (const project of this.projects()) {
+      if (projectId && project.id !== projectId) continue;
+      candidates.push(
+        ...suggestTopics({
+          state: this.#store.loadProjectState(project.id),
+          projectName: project.displayName ?? project.repositoryFullName,
+          now,
+        }),
+      );
+    }
+
+    return candidates.sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
+  }
+
+  /** What should actually be put in front of the owner: above the bar, capped, not already settled. */
+  podcastSuggestions(projectId?: string): TopicSuggestion[] {
+    const decided = new Set(this.#store.suggestionDecisions(projectId).map((d) => d.suggestionId));
+    return openSuggestions(this.topicCandidates(projectId), decided);
+  }
+
+  /** Topics the owner kept for later, and the ones they turned down. */
+  suggestionDecisions(projectId?: string): StoredSuggestionDecision[] {
+    return this.#store.suggestionDecisions(projectId);
+  }
+
+  /**
+   * Record a decision about a proposal, storing the proposal as it stands right now.
+   *
+   * Returns `undefined` for an id that is not currently being proposed, so a stale form
+   * submission cannot invent a decision about a topic the engine no longer makes.
+   */
+  decideSuggestion(id: string, decision: SuggestionDecision): StoredSuggestionDecision | undefined {
+    const suggestion = this.topicCandidates().find((s) => s.id === id);
+    if (!suggestion) return undefined;
+
+    return this.#store.decideSuggestion({
+      suggestionId: suggestion.id,
+      projectId: suggestion.projectId,
+      decision,
+      title: suggestion.title,
+      whyNow: suggestion.whyNow,
+      refs: suggestion.refs,
+      decidedAt: this.now().toISOString(),
+    });
+  }
+
+  /** Put a saved or dismissed topic back in the list. An already-generated episode stays. */
+  undecideSuggestion(id: string): boolean {
+    return this.#store.undecideSuggestion(id);
+  }
+
+  /**
+   * The owner approving a topic: generate the deep-dive script for it.
+   *
+   * This is the only path from a suggestion to a script, and it runs on an explicit owner action
+   * and nothing else — the approval boundary the idea note draws. What it generates is built from
+   * the *stored* proposal, so the episode is about the topic that was approved even if the rules
+   * would phrase it differently by now.
+   *
+   * Grounding comes from the current fact pack, filtered to the facts that reference what the
+   * proposal named. A topic whose subject matter has since left the pack produces a script that
+   * says so rather than one that fills the gap.
+   */
+  createPodcastFromSuggestion(id: string): PodcastScript | undefined {
+    const decided = this.#store.suggestionDecision(id)?.decision === "EPISODE_CREATED"
+      ? this.#store.suggestionDecision(id)
+      : this.decideSuggestion(id, "EPISODE_CREATED");
+    if (!decided) return undefined;
+
+    const approved = new Set(decided.refs.map((ref) => `${ref.kind}|${ref.id}`));
+    const pack = this.briefing(decided.projectId);
+    const beats: DeepDiveBeat[] = pack.sections
+      .map((section) => ({
+        title: section.title,
+        facts: section.facts.filter((fact) => fact.refs.some((ref) => approved.has(`${ref.kind}|${ref.id}`))),
+      }))
+      .filter((beat) => beat.facts.length > 0);
+
+    return buildDeepDivePodcastScript({
+      topic: { title: decided.title, whyNow: decided.whyNow },
       beats,
       generatedAt: pack.generatedAt,
       ownerUserId: pack.ownerUserId,

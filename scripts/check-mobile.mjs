@@ -39,6 +39,7 @@ const PAGES = [
   ["briefing", "/briefing"],
   ["podcast", "/podcast"],
   ["podcast deep dive", "/podcast/deep-dive"],
+  ["podcast suggestions", "/podcast/suggestions"],
 ];
 
 const browser = await chromium.launch({
